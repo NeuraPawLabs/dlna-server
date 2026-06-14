@@ -33,10 +33,11 @@ android/app/build/outputs/apk/debug/app-debug.apk
 
 1. Install the APK on Honor Smart Screen by U disk or the system-supported sideload flow.
 2. Launch `NewraPaw DLNA Probe`.
-3. Enter a fresh m3u8 URL if the built-in field is empty.
-4. Press `Play Test Stream`.
-5. Confirm the status changes from `Idle` to `Buffering` and then `Ready`.
-6. Confirm video and audio play.
-7. Press `Stop` and then `Play Test Stream` again.
+3. On the TV screen, find the `Open on phone` URL, such as `http://192.168.1.23:43000`.
+4. Open that URL from a phone or computer on the same Wi-Fi/LAN.
+5. Paste a fresh m3u8 URL into the browser page and press `Play`.
+6. Confirm the TV status changes from `Idle` to `Buffering` and then `Ready`.
+7. Confirm video and audio play.
+8. Press `Stop` from the browser page or TV app, then submit `Play` again.
 
 If playback fails, photograph the visible log panel and copy any logcat output if available.

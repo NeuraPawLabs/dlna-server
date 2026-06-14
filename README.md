@@ -77,6 +77,8 @@ npm start
 
 The Android probe lives in `android/`. It validates APK installation and ExoPlayer playback through the same HLS normalization approach proven by the Linux prototype.
 
+After launching the probe on the TV, open the displayed `Open on phone` URL from a phone or computer on the same LAN. Paste the long m3u8 URL in that browser page and press `Play`; you do not need to type long URLs with the TV remote.
+
 Build when JDK 17 and Android SDK 36 are available:
 
 ```bash

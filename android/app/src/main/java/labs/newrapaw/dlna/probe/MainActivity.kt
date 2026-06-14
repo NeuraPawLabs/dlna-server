@@ -29,13 +29,19 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         player = ExoPlayer.Builder(this).build()
-        proxy = LocalHlsProxy(OkHttpClient(), ::appendLog)
+        proxy = LocalHlsProxy(
+            client = OkHttpClient(),
+            log = ::appendLog,
+            onPlayRequested = { url -> runOnUiThread { playUrl(url) } },
+            onStopRequested = { runOnUiThread { stopPlayback() } },
+        )
         runCatching { proxy.start() }
             .onFailure { appendLog("Proxy start failed: ${it.message}") }
 
         setContentView(buildContentView())
         appendLog("IP: ${localIpAddress()}")
         appendLog("Proxy: ${proxy.baseUrl}")
+        appendLog("Open on phone: ${publicControlUrl()}")
         setStatus("Idle")
     }
 
@@ -128,7 +134,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun playTestStream() {
-        val source = urlInput.text.toString().trim()
+        playUrl(urlInput.text.toString().trim())
+    }
+
+    private fun playUrl(source: String) {
         if (source.isEmpty()) {
             appendLog("Enter a test m3u8 URL first")
             return
@@ -148,7 +157,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setStatus(status: String) {
-        statusView.text = "Status: $status    Local IP: ${localIpAddress()}    Proxy: ${proxy.baseUrl}"
+        statusView.text = "Status: $status    Open on phone: ${publicControlUrl()}    Playback proxy: ${proxy.baseUrl}"
     }
 
     private fun appendLog(message: String) {
@@ -167,4 +176,7 @@ class MainActivity : AppCompatActivity() {
             .firstOrNull { !it.isLoopbackAddress && it.hostAddress?.contains(":") == false }
             ?.hostAddress
             ?: "unknown"
+
+    private fun publicControlUrl(): String =
+        localIpAddress().takeIf { it != "unknown" }?.let(proxy::publicBaseUrl) ?: "unknown"
 }
