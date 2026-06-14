@@ -72,3 +72,16 @@ npm run build
 npm run dev
 npm start
 ```
+
+## Android Honor Smart Screen Probe
+
+The Android probe lives in `android/`. It validates APK installation and ExoPlayer playback through the same HLS normalization approach proven by the Linux prototype.
+
+Build when JDK 17 and Android SDK 35 are available:
+
+```bash
+cd android
+./gradlew :app:assembleDebug
+```
+
+See `docs/android-honor-probe.md` for sideload and TV verification steps.
