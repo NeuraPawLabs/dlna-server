@@ -19,6 +19,7 @@ class LocalHlsProxy(
     private val log: (String) -> Unit,
     private val onPlayRequested: (String) -> Unit = {},
     private val onStopRequested: () -> Unit = {},
+    private val onUpdateRequested: (String) -> Unit = {},
 ) : Closeable {
     private val running = AtomicBoolean(false)
     private val executor: ExecutorService = Executors.newCachedThreadPool()
@@ -71,6 +72,7 @@ class LocalHlsProxy(
                 method == "GET" && path == "/" -> handleControlPage(it.getOutputStream())
                 method == "POST" && path.startsWith("/control/play") -> handlePlayRequest(body, it.getOutputStream())
                 method == "POST" && path.startsWith("/control/stop") -> handleStopRequest(it.getOutputStream())
+                method == "POST" && path.startsWith("/control/update") -> handleUpdateRequest(body, it.getOutputStream())
                 path.startsWith("/proxy/hls.m3u8") -> handleManifest(path, it.getOutputStream())
                 path.startsWith("/proxy/segment.ts") -> handleSegment(path, it.getOutputStream())
                 else -> writeText(it.getOutputStream(), 404, "text/plain", "Not Found")
@@ -107,6 +109,18 @@ class LocalHlsProxy(
         log("Remote stop request")
         onStopRequested()
         writeText(output, 200, "text/html", "Stop request sent. You can return to the TV.")
+    }
+
+    private fun handleUpdateRequest(body: String, output: OutputStream) {
+        val apkUrl = decodeFormValue(body, "apkUrl")
+        if (apkUrl == null) {
+            writeText(output, 400, "text/html", "Missing APK URL")
+            return
+        }
+
+        log("Remote update request: $apkUrl")
+        onUpdateRequested(apkUrl)
+        writeText(output, 200, "text/html", "Update request sent. Confirm installation on the TV.")
     }
 
     private fun handleManifest(path: String, output: OutputStream) {

@@ -20,6 +20,8 @@ class ControlPageTest {
         assertTrue(html.contains("name=\"url\""))
         assertTrue(html.contains("action=\"/control/play\""))
         assertTrue(html.contains("action=\"/control/stop\""))
+        assertTrue(html.contains("name=\"apkUrl\""))
+        assertTrue(html.contains("action=\"/control/update\""))
     }
 
     @Test
@@ -28,5 +30,13 @@ class ControlPageTest {
         val body = "url=${URLEncoder.encode(original, "UTF-8")}"
 
         assertEquals(original, decodeFormUrl(body))
+    }
+
+    @Test
+    fun decodeFormValueExtractsApkUrl() {
+        val original = "http://192.168.1.10:8080/app-debug.apk"
+        val body = "apkUrl=${URLEncoder.encode(original, "UTF-8")}"
+
+        assertEquals(original, decodeFormValue(body, "apkUrl"))
     }
 }

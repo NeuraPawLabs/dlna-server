@@ -79,6 +79,8 @@ The Android probe lives in `android/`. It validates APK installation and ExoPlay
 
 After launching the probe on the TV, open the displayed `Open on phone` URL from a phone or computer on the same LAN. Paste the long m3u8 URL in that browser page and press `Play`; you do not need to type long URLs with the TV remote.
 
+For later updates, build the APK, serve `android/app/build/outputs/apk/debug/app-debug.apk` from the development machine, then paste the APK URL into the same browser control page. The TV will download it and open the system installer.
+
 Build when JDK 17 and Android SDK 36 are available:
 
 ```bash

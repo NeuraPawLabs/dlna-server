@@ -41,3 +41,31 @@ android/app/build/outputs/apk/debug/app-debug.apk
 8. Press `Stop` from the browser page or TV app, then submit `Play` again.
 
 If playback fails, photograph the visible log panel and copy any logcat output if available.
+
+## Update Without USB Copy
+
+After the first APK is installed, later debug builds can be installed through the probe's browser control page.
+
+Build the latest APK:
+
+```bash
+cd android
+./gradlew :app:assembleDebug
+```
+
+Serve the APK from the development machine:
+
+```bash
+cd app/build/outputs/apk/debug
+python3 -m http.server 8080
+```
+
+On the TV, launch `NewraPaw DLNA Probe`. From a phone or computer on the same LAN, open the `Open on phone` URL shown on the TV. Paste this APK URL into the `Paste APK URL` field:
+
+```text
+http://<dev-machine-ip>:8080/app-debug.apk
+```
+
+Press `Install Update`. The TV downloads the APK and opens the system installer. Confirm the install on the TV.
+
+Android does not allow this debug app to silently update itself, so the final confirmation click on the TV is still required.

@@ -27,15 +27,25 @@ fun buildControlPage(deviceName: String, status: String, localPlaybackUrl: Strin
         <form method="post" action="/control/stop">
           <button type="submit">Stop</button>
         </form>
+        <hr>
+        <form method="post" action="/control/update">
+          <label for="apkUrl">Paste APK URL</label>
+          <textarea id="apkUrl" name="apkUrl"></textarea>
+          <button type="submit">Install Update</button>
+        </form>
       </body>
     </html>
 """.trimIndent()
 
 fun decodeFormUrl(body: String): String? {
+    return decodeFormValue(body, "url")
+}
+
+fun decodeFormValue(body: String, key: String): String? {
     val params = body.split("&").mapNotNull {
         val parts = it.split("=", limit = 2)
         if (parts.size == 2) parts[0] to URLDecoder.decode(parts[1], "UTF-8") else null
     }.toMap()
 
-    return params["url"]?.trim()?.takeIf { it.isNotEmpty() }
+    return params[key]?.trim()?.takeIf { it.isNotEmpty() }
 }

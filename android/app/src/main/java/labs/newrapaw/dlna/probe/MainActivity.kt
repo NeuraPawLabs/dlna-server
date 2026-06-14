@@ -20,6 +20,7 @@ import java.net.NetworkInterface
 class MainActivity : AppCompatActivity() {
     private lateinit var player: ExoPlayer
     private lateinit var proxy: LocalHlsProxy
+    private lateinit var updater: ApkUpdater
     private lateinit var statusView: TextView
     private lateinit var logView: TextView
     private lateinit var urlInput: EditText
@@ -29,11 +30,13 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         player = ExoPlayer.Builder(this).build()
+        updater = ApkUpdater(this, OkHttpClient(), ::appendLog)
         proxy = LocalHlsProxy(
             client = OkHttpClient(),
             log = ::appendLog,
             onPlayRequested = { url -> runOnUiThread { playUrl(url) } },
             onStopRequested = { runOnUiThread { stopPlayback() } },
+            onUpdateRequested = { apkUrl -> updater.downloadAndLaunchInstaller(apkUrl) },
         )
         runCatching { proxy.start() }
             .onFailure { appendLog("Proxy start failed: ${it.message}") }
