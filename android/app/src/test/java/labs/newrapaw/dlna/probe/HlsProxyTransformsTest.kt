@@ -1,5 +1,7 @@
 package labs.newrapaw.dlna.probe
 
+import java.nio.file.Files
+import java.nio.file.Paths
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -14,6 +16,14 @@ class HlsProxyTransformsTest {
 
         assertFalse(encoded.contains(".png"))
         assertEquals(original, decodeProxyUrl(encoded))
+    }
+
+    @Test
+    fun proxyUrlEncodingDoesNotUseAndroidApi26Base64() {
+        val sourcePath = Paths.get("src/main/java/labs/newrapaw/dlna/probe/HlsProxyTransforms.kt")
+        val source = String(Files.readAllBytes(sourcePath), Charsets.UTF_8)
+
+        assertFalse(source.contains("java.util.Base64"))
     }
 
     @Test

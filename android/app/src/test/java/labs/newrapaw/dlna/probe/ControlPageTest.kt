@@ -12,6 +12,7 @@ class ControlPageTest {
             deviceName = "Honor Screen",
             status = "Ready",
             localPlaybackUrl = "http://127.0.0.1:43000",
+            logs = emptyList(),
         )
 
         assertTrue(html.contains("Honor Screen"))
@@ -22,6 +23,21 @@ class ControlPageTest {
         assertTrue(html.contains("action=\"/control/stop\""))
         assertTrue(html.contains("name=\"apkUrl\""))
         assertTrue(html.contains("action=\"/control/update\""))
+    }
+
+    @Test
+    fun buildControlPageContainsAutoRefreshingLogs() {
+        val html = buildControlPage(
+            deviceName = "Honor Screen",
+            status = "Ready",
+            localPlaybackUrl = "http://127.0.0.1:43000",
+            logs = listOf("Remote play request", "Player error: demo"),
+        )
+
+        assertTrue(html.contains("id=\"logs\""))
+        assertTrue(html.contains("/logs"))
+        assertTrue(html.contains("Remote play request"))
+        assertTrue(html.contains("Player error: demo"))
     }
 
     @Test

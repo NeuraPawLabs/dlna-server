@@ -1,13 +1,14 @@
 package labs.newrapaw.dlna.probe
 
+import okio.ByteString.Companion.decodeBase64
+import okio.ByteString.Companion.encodeUtf8
 import java.net.URI
-import java.util.Base64
 
 fun encodeProxyUrl(url: String): String =
-    Base64.getUrlEncoder().withoutPadding().encodeToString(url.toByteArray(Charsets.UTF_8))
+    url.encodeUtf8().base64Url().trimEnd('=')
 
 fun decodeProxyUrl(encoded: String): String =
-    String(Base64.getUrlDecoder().decode(encoded), Charsets.UTF_8)
+    encoded.withBase64Padding().decodeBase64()?.utf8() ?: ""
 
 fun isLikelyHlsManifest(url: String): Boolean =
     Regex("""\.m3u8(?:$|[/?#&=;%])""", RegexOption.IGNORE_CASE).containsMatchIn(url)
@@ -46,4 +47,9 @@ private fun findMpegTsOffset(segment: ByteArray): Int {
         offset += 1
     }
     return 0
+}
+
+private fun String.withBase64Padding(): String {
+    val missingPadding = (4 - length % 4) % 4
+    return if (missingPadding == 0) this else this + "=".repeat(missingPadding)
 }

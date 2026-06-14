@@ -2,7 +2,12 @@ package labs.newrapaw.dlna.probe
 
 import java.net.URLDecoder
 
-fun buildControlPage(deviceName: String, status: String, localPlaybackUrl: String): String = """
+fun buildControlPage(
+    deviceName: String,
+    status: String,
+    localPlaybackUrl: String,
+    logs: List<String>,
+): String = """
     <!doctype html>
     <html>
       <head>
@@ -14,6 +19,7 @@ fun buildControlPage(deviceName: String, status: String, localPlaybackUrl: Strin
           textarea { width: 100%; height: 180px; font-family: monospace; }
           button { font-size: 18px; padding: 10px 16px; margin-top: 10px; }
           .status { margin: 12px 0; padding: 10px; background: #f2f2f2; }
+          #logs { min-height: 220px; padding: 10px; overflow: auto; background: #111; color: #eee; white-space: pre-wrap; }
         </style>
       </head>
       <body>
@@ -33,6 +39,17 @@ fun buildControlPage(deviceName: String, status: String, localPlaybackUrl: Strin
           <textarea id="apkUrl" name="apkUrl"></textarea>
           <button type="submit">Install Update</button>
         </form>
+        <hr>
+        <h2>Logs</h2>
+        <pre id="logs">${escapeHtml(logs.joinToString("\n"))}</pre>
+        <script>
+          async function refreshLogs() {
+            const response = await fetch('/logs', { cache: 'no-store' });
+            document.getElementById('logs').textContent = await response.text();
+          }
+          setInterval(refreshLogs, 1000);
+          refreshLogs();
+        </script>
       </body>
     </html>
 """.trimIndent()
@@ -49,3 +66,11 @@ fun decodeFormValue(body: String, key: String): String? {
 
     return params[key]?.trim()?.takeIf { it.isNotEmpty() }
 }
+
+private fun escapeHtml(value: String): String =
+    value
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\"", "&quot;")
+        .replace("'", "&#39;")

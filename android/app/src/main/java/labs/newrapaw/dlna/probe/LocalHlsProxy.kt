@@ -17,12 +17,21 @@ import java.util.concurrent.atomic.AtomicBoolean
 class LocalHlsProxy(
     private val client: OkHttpClient = OkHttpClient(),
     private val log: (String) -> Unit,
+    private val getLogs: () -> List<String> = { emptyList() },
+    private val dlnaConfig: () -> DlnaDeviceConfig? = { null },
     private val onPlayRequested: (String) -> Unit = {},
     private val onStopRequested: () -> Unit = {},
+    private val onPauseRequested: () -> Unit = {},
     private val onUpdateRequested: (String) -> Unit = {},
 ) : Closeable {
     private val running = AtomicBoolean(false)
     private val executor: ExecutorService = Executors.newCachedThreadPool()
+    private val renderer = DlnaRendererController(
+        log = log,
+        onPlayRequested = onPlayRequested,
+        onStopRequested = onStopRequested,
+        onPauseRequested = onPauseRequested,
+    )
     private var serverSocket: ServerSocket? = null
 
     val port: Int
@@ -38,7 +47,7 @@ class LocalHlsProxy(
         serverSocket = ServerSocket(0, 50, InetAddress.getByName("0.0.0.0"))
         running.set(true)
         executor.execute {
-            log("Proxy listening at $baseUrl")
+            safeLog("Proxy listening at $baseUrl")
             while (running.get()) {
                 val socket = runCatching { serverSocket?.accept() }.getOrNull() ?: break
                 executor.execute { handle(socket) }
@@ -54,28 +63,43 @@ class LocalHlsProxy(
 
     private fun handle(socket: Socket) {
         socket.use {
-            val reader = BufferedReader(InputStreamReader(it.getInputStream()))
-            val requestLine = reader.readLine().orEmpty()
-            val method = requestLine.split(" ").getOrNull(0).orEmpty()
-            val path = requestLine.split(" ").getOrNull(1).orEmpty()
-            val headers = mutableMapOf<String, String>()
-            while (true) {
-                val line = reader.readLine().orEmpty()
-                if (line.isEmpty()) break
-                val name = line.substringBefore(":", "").trim().lowercase()
-                val value = line.substringAfter(":", "").trim()
-                if (name.isNotEmpty()) headers[name] = value
-            }
-            val body = readBody(reader, headers["content-length"]?.toIntOrNull() ?: 0)
+            val output = it.getOutputStream()
+            runCatching {
+                val reader = BufferedReader(InputStreamReader(it.getInputStream()))
+                val requestLine = reader.readLine().orEmpty()
+                val method = requestLine.split(" ").getOrNull(0).orEmpty()
+                val path = requestLine.split(" ").getOrNull(1).orEmpty()
+                val headers = mutableMapOf<String, String>()
+                while (true) {
+                    val line = reader.readLine().orEmpty()
+                    if (line.isEmpty()) break
+                    val name = line.substringBefore(":", "").trim().lowercase()
+                    val value = line.substringAfter(":", "").trim()
+                    if (name.isNotEmpty()) headers[name] = value
+                }
+                val body = readBody(reader, headers["content-length"]?.toIntOrNull() ?: 0)
 
-            when {
-                method == "GET" && path == "/" -> handleControlPage(it.getOutputStream())
-                method == "POST" && path.startsWith("/control/play") -> handlePlayRequest(body, it.getOutputStream())
-                method == "POST" && path.startsWith("/control/stop") -> handleStopRequest(it.getOutputStream())
-                method == "POST" && path.startsWith("/control/update") -> handleUpdateRequest(body, it.getOutputStream())
-                path.startsWith("/proxy/hls.m3u8") -> handleManifest(path, it.getOutputStream())
-                path.startsWith("/proxy/segment.ts") -> handleSegment(path, it.getOutputStream())
-                else -> writeText(it.getOutputStream(), 404, "text/plain", "Not Found")
+                when {
+                    method == "GET" && path == "/" -> handleControlPage(output)
+                    method == "GET" && path.startsWith("/logs") -> handleLogs(output)
+                    method == "GET" && path == "/description.xml" -> handleDeviceDescription(output)
+                    method == "GET" && path == "/upnp/service/AVTransport.xml" -> writeText(output, 200, "text/xml", buildAvTransportScpdXml())
+                    method == "GET" && path == "/upnp/service/RenderingControl.xml" -> writeText(output, 200, "text/xml", buildRenderingControlScpdXml())
+                    method == "GET" && path == "/upnp/service/ConnectionManager.xml" -> writeText(output, 200, "text/xml", buildConnectionManagerScpdXml())
+                    method == "POST" && path.startsWith("/upnp/control/") -> handleDlnaControl(path, headers, body, output)
+                    method == "SUBSCRIBE" && path.startsWith("/upnp/event/") -> handleEventSubscribe(path, output)
+                    method == "UNSUBSCRIBE" && path.startsWith("/upnp/event/") -> handleEventUnsubscribe(path, output)
+                    method == "POST" && path.startsWith("/control/play") -> handlePlayRequest(body, output)
+                    method == "POST" && path.startsWith("/control/stop") -> handleStopRequest(output)
+                    method == "POST" && path.startsWith("/control/update") -> handleUpdateRequest(body, output)
+                    path.startsWith("/proxy/hls.m3u8") -> handleManifest(path, output)
+                    path.startsWith("/proxy/segment.ts") -> handleSegment(path, output)
+                    else -> writeText(output, 404, "text/plain", "Not Found")
+                }
+            }.onFailure { error ->
+                val message = "${error::class.java.simpleName}: ${error.message}"
+                safeLog("Request failed: $message")
+                runCatching { writeText(output, 500, "text/plain", "Internal Server Error: $message") }
             }
         }
     }
@@ -89,8 +113,48 @@ class LocalHlsProxy(
                 deviceName = "NewraPaw DLNA Probe",
                 status = "Ready",
                 localPlaybackUrl = baseUrl,
+                logs = getLogs(),
             ),
         )
+    }
+
+    private fun handleLogs(output: OutputStream) {
+        writeText(output, 200, "text/plain", getLogs().joinToString("\n"))
+    }
+
+    private fun handleDeviceDescription(output: OutputStream) {
+        val config = dlnaConfig()
+        if (config == null) {
+            writeText(output, 503, "text/plain", "DLNA device address is not ready")
+            return
+        }
+
+        writeText(output, 200, "text/xml", buildDeviceDescriptionXml(config))
+    }
+
+    private fun handleDlnaControl(
+        path: String,
+        headers: Map<String, String>,
+        body: String,
+        output: OutputStream,
+    ) {
+        val serviceName = path.substringAfterLast("/")
+        val response = renderer.handleControlRequest(
+            serviceName = serviceName,
+            soapActionHeader = headers["soapaction"],
+            body = body,
+        )
+        writeText(output, response.statusCode, response.contentType.substringBefore(";"), response.body)
+    }
+
+    private fun handleEventSubscribe(path: String, output: OutputStream) {
+        safeLog("[DLNA] Subscribe: ${path.substringAfterLast("/")}")
+        writeResponse(output, buildEventSubscribeResponse())
+    }
+
+    private fun handleEventUnsubscribe(path: String, output: OutputStream) {
+        safeLog("[DLNA] Unsubscribe: ${path.substringAfterLast("/")}")
+        writeResponse(output, buildEventUnsubscribeResponse())
     }
 
     private fun handlePlayRequest(body: String, output: OutputStream) {
@@ -100,13 +164,13 @@ class LocalHlsProxy(
             return
         }
 
-        log("Remote play request: $url")
+        safeLog("Remote play request: $url")
         onPlayRequested(url)
         writeText(output, 200, "text/html", "Play request sent. You can return to the TV.")
     }
 
     private fun handleStopRequest(output: OutputStream) {
-        log("Remote stop request")
+        safeLog("Remote stop request")
         onStopRequested()
         writeText(output, 200, "text/html", "Stop request sent. You can return to the TV.")
     }
@@ -118,7 +182,7 @@ class LocalHlsProxy(
             return
         }
 
-        log("Remote update request: $apkUrl")
+        safeLog("Remote update request: $apkUrl")
         onUpdateRequested(apkUrl)
         writeText(output, 200, "text/html", "Update request sent. Confirm installation on the TV.")
     }
@@ -130,10 +194,17 @@ class LocalHlsProxy(
             return
         }
 
+        safeLog("Proxy manifest: $upstreamUrl")
         val response = client.newCall(Request.Builder().url(upstreamUrl).build()).execute()
         response.use {
             if (!it.isSuccessful) {
-                writeText(output, it.code, "text/plain", "Upstream manifest failed: ${it.code}")
+                val failure = formatUpstreamFailure(
+                    statusCode = it.code,
+                    statusMessage = it.message,
+                    body = it.body?.string().orEmpty(),
+                )
+                safeLog("Proxy manifest failed: $failure")
+                writeText(output, it.code, "text/plain", "Upstream manifest failed: $failure")
                 return
             }
             val manifest = it.body?.string().orEmpty()
@@ -151,7 +222,13 @@ class LocalHlsProxy(
         val response = client.newCall(Request.Builder().url(upstreamUrl).build()).execute()
         response.use {
             if (!it.isSuccessful) {
-                writeText(output, it.code, "text/plain", "Upstream segment failed: ${it.code}")
+                val failure = formatUpstreamFailure(
+                    statusCode = it.code,
+                    statusMessage = it.message,
+                    body = it.body?.string().orEmpty(),
+                )
+                safeLog("Proxy segment failed: $failure $upstreamUrl")
+                writeText(output, it.code, "text/plain", "Upstream segment failed: $failure")
                 return
             }
             val bytes = it.body?.bytes() ?: ByteArray(0)
@@ -180,13 +257,36 @@ class LocalHlsProxy(
         writeBytes(output, status, "$contentType; charset=utf-8", body.toByteArray(Charsets.UTF_8))
     }
 
-    private fun writeBytes(output: OutputStream, status: Int, contentType: String, body: ByteArray) {
+    private fun writeResponse(output: OutputStream, response: DlnaHttpResponse) {
+        writeBytes(
+            output = output,
+            status = response.statusCode,
+            contentType = response.contentType,
+            body = response.body.toByteArray(Charsets.UTF_8),
+            extraHeaders = response.headers,
+        )
+    }
+
+    private fun writeBytes(
+        output: OutputStream,
+        status: Int,
+        contentType: String,
+        body: ByteArray,
+        extraHeaders: Map<String, String> = emptyMap(),
+    ) {
         val reason = if (status in 200..299) "OK" else "Error"
         output.write("HTTP/1.1 $status $reason\r\n".toByteArray())
         output.write("Content-Type: $contentType\r\n".toByteArray())
         output.write("Content-Length: ${body.size}\r\n".toByteArray())
+        extraHeaders.forEach { (name, value) ->
+            output.write("$name: $value\r\n".toByteArray())
+        }
         output.write("Connection: close\r\n\r\n".toByteArray())
         output.write(body)
         output.flush()
+    }
+
+    private fun safeLog(message: String) {
+        runCatching { log(message) }
     }
 }
