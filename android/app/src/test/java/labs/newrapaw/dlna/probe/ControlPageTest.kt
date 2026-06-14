@@ -12,11 +12,19 @@ class ControlPageTest {
             deviceName = "Honor Screen",
             status = "Ready",
             localPlaybackUrl = "http://127.0.0.1:43000",
+            proxySettings = ProxySettingsState(),
+            cacheStats = HlsSegmentCacheStats(entries = 0, sizeBytes = 0, hits = 0, misses = 0, inFlight = 0),
             logs = emptyList(),
         )
 
         assertTrue(html.contains("Honor Screen"))
         assertTrue(html.contains("Ready"))
+        assertTrue(html.contains("nav"))
+        assertTrue(html.contains("href=\"#play\""))
+        assertTrue(html.contains("href=\"#proxy\""))
+        assertTrue(html.contains("href=\"#logs\""))
+        assertTrue(html.contains("href=\"#update\""))
+        assertTrue(html.contains("href=\"#cache\""))
         assertTrue(html.contains("textarea"))
         assertTrue(html.contains("name=\"url\""))
         assertTrue(html.contains("action=\"/control/play\""))
@@ -31,6 +39,11 @@ class ControlPageTest {
             deviceName = "Honor Screen",
             status = "Ready",
             localPlaybackUrl = "http://127.0.0.1:43000",
+            proxySettings = ProxySettingsState(
+                proxies = listOf(ProxyConfig("p1", ProxyType.SOCKS5H, "proxy.example", 1080)),
+                selectedProxyId = "p1",
+            ),
+            cacheStats = HlsSegmentCacheStats(entries = 2, sizeBytes = 4096, hits = 3, misses = 4, inFlight = 1),
             logs = listOf("Remote play request", "Player error: demo"),
         )
 
@@ -38,6 +51,49 @@ class ControlPageTest {
         assertTrue(html.contains("/logs"))
         assertTrue(html.contains("Remote play request"))
         assertTrue(html.contains("Player error: demo"))
+    }
+
+    @Test
+    fun buildControlPageContainsProxyManagementForms() {
+        val html = buildControlPage(
+            deviceName = "Honor Screen",
+            status = "Ready",
+            localPlaybackUrl = "http://127.0.0.1:43000",
+            proxySettings = ProxySettingsState(
+                proxies = listOf(ProxyConfig("proxy-1", ProxyType.HTTP, "192.168.1.2", 7890)),
+                selectedProxyId = "proxy-1",
+            ),
+            cacheStats = HlsSegmentCacheStats(entries = 0, sizeBytes = 0, hits = 0, misses = 0, inFlight = 0),
+            logs = emptyList(),
+        )
+
+        assertTrue(html.contains("action=\"/control/proxy/add\""))
+        assertTrue(html.contains("name=\"proxyUrl\""))
+        assertTrue(html.contains("action=\"/control/proxy/select\""))
+        assertTrue(html.contains("action=\"/control/proxy/delete\""))
+        assertTrue(html.contains("value=\"direct\""))
+        assertTrue(html.contains("http://192.168.1.2:7890"))
+        assertTrue(html.contains("checked"))
+    }
+
+    @Test
+    fun buildControlPageContainsCacheStatusAndClearForm() {
+        val html = buildControlPage(
+            deviceName = "Honor Screen",
+            status = "Ready",
+            localPlaybackUrl = "http://127.0.0.1:43000",
+            proxySettings = ProxySettingsState(),
+            cacheStats = HlsSegmentCacheStats(entries = 3, sizeBytes = 1024 * 1024, hits = 7, misses = 2, inFlight = 1),
+            logs = emptyList(),
+        )
+
+        assertTrue(html.contains("id=\"cache\""))
+        assertTrue(html.contains("Entries: 3"))
+        assertTrue(html.contains("Size: 1.0 MB"))
+        assertTrue(html.contains("Hits: 7"))
+        assertTrue(html.contains("Misses: 2"))
+        assertTrue(html.contains("In flight: 1"))
+        assertTrue(html.contains("action=\"/control/cache/clear\""))
     }
 
     @Test
@@ -54,5 +110,13 @@ class ControlPageTest {
         val body = "apkUrl=${URLEncoder.encode(original, "UTF-8")}"
 
         assertEquals(original, decodeFormValue(body, "apkUrl"))
+    }
+
+    @Test
+    fun decodeFormValueExtractsProxyUrl() {
+        val original = "socks5h://proxy.example:1080"
+        val body = "proxyUrl=${URLEncoder.encode(original, "UTF-8")}"
+
+        assertEquals(original, decodeFormValue(body, "proxyUrl"))
     }
 }

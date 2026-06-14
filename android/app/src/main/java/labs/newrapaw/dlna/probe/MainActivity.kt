@@ -27,6 +27,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var player: ExoPlayer
     private lateinit var proxy: LocalHlsProxy
     private lateinit var updater: ApkUpdater
+    private lateinit var proxySettingsStore: ProxySettingsStore
     private var ssdp: SsdpAdvertiser? = null
     private lateinit var rootView: LinearLayout
     private lateinit var playerView: PlayerView
@@ -34,9 +35,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var instructionView: TextView
     private lateinit var managementUrlView: TextView
     private lateinit var chromeViews: List<View>
+    private val menuItemViews = linkedMapOf<TvMenuItem, TextView>()
     private val logs = ArrayDeque<String>()
     private val logLock = Any()
     private var isFullscreenPlayback = false
+    private var selectedMenuItem = TvMenuItem.PLAY
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -45,10 +48,19 @@ class MainActivity : AppCompatActivity() {
         startRendererForegroundService()
         player = ExoPlayer.Builder(this).build()
         updater = ApkUpdater(this, OkHttpClient(), ::appendLog)
+        proxySettingsStore = SharedPreferencesProxySettingsStore(
+            getSharedPreferences("newrapaw_dlna_settings", MODE_PRIVATE),
+        )
+        val segmentCache = HlsSegmentCache(
+            directory = cacheDir.resolve("hls-segments"),
+            maxBytes = HLS_CACHE_MAX_BYTES,
+        )
         proxy = LocalHlsProxy(
             client = OkHttpClient(),
             log = ::appendLog,
             getLogs = ::logSnapshot,
+            proxySettingsStore = proxySettingsStore,
+            segmentCache = segmentCache,
             dlnaConfig = ::dlnaDeviceConfig,
             onPlayRequested = { url -> postToUi("play") { playUrl(url) } },
             onStopRequested = { postToUi("stop") { stopPlayback() } },
@@ -76,23 +88,56 @@ class MainActivity : AppCompatActivity() {
 
     private fun buildContentView(): LinearLayout {
         rootView = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+            orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(Color.BLACK)
-            gravity = Gravity.CENTER
-            setPadding(48, 40, 48, 40)
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(32, 32, 48, 32)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
             )
         }
 
+        val menuView = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                220,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+        }
+        rootView.addView(menuView)
+
         val titleView = TextView(this).apply {
             text = "NewraPaw DLNA TV"
-            textSize = 34f
+            textSize = 22f
             setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER_HORIZONTAL
+            gravity = Gravity.START
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                bottomMargin = 42
+            }
         }
-        rootView.addView(titleView)
+        menuView.addView(titleView)
+
+        TvMenuItem.entries.forEach { item ->
+            val itemView = menuItem(item)
+            menuItemViews[item] = itemView
+            menuView.addView(itemView)
+        }
+
+        val contentView = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                1f,
+            )
+        }
+        rootView.addView(contentView)
 
         statusView = TextView(this).apply {
             text = "等待投屏..."
@@ -106,7 +151,7 @@ class MainActivity : AppCompatActivity() {
                 topMargin = 40
             }
         }
-        rootView.addView(statusView)
+        contentView.addView(statusView)
 
         instructionView = TextView(this).apply {
             text = "请在同一网络下的投屏设备中选择本设备"
@@ -120,7 +165,7 @@ class MainActivity : AppCompatActivity() {
                 topMargin = 24
             }
         }
-        rootView.addView(instructionView)
+        contentView.addView(instructionView)
 
         managementUrlView = TextView(this).apply {
             text = "管理页面: ${publicControlUrl()}"
@@ -134,7 +179,7 @@ class MainActivity : AppCompatActivity() {
                 topMargin = 64
             }
         }
-        rootView.addView(managementUrlView)
+        contentView.addView(managementUrlView)
 
         playerView = PlayerView(this).apply {
             player = this@MainActivity.player
@@ -147,9 +192,10 @@ class MainActivity : AppCompatActivity() {
             )
         }
         playerView.keepScreenOn = true
-        rootView.addView(playerView)
+        contentView.addView(playerView)
 
-        chromeViews = listOf(titleView, statusView, instructionView, managementUrlView)
+        chromeViews = listOf(menuView, statusView, instructionView, managementUrlView)
+        selectMenuItem(TvMenuItem.PLAY)
 
         player.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -177,6 +223,82 @@ class MainActivity : AppCompatActivity() {
         })
 
         return rootView
+    }
+
+    private fun menuItem(item: TvMenuItem): TextView =
+        TextView(this).apply {
+            text = item.label
+            textSize = 18f
+            setTextColor(0xffaaaaaa.toInt())
+            gravity = Gravity.START
+            isFocusable = true
+            isClickable = true
+            setPadding(14, 10, 14, 10)
+            setOnClickListener { selectMenuItem(item) }
+            setOnFocusChangeListener { view, hasFocus ->
+                if (hasFocus) selectMenuItem(item) else updateMenuItemStyle(item, view as TextView, false)
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                bottomMargin = 24
+            }
+        }
+
+    private fun selectMenuItem(item: TvMenuItem) {
+        selectedMenuItem = item
+        menuItemViews.forEach { (menuItem, view) ->
+            updateMenuItemStyle(menuItem, view, view.hasFocus())
+        }
+        updateHomeContent()
+    }
+
+    private fun updateMenuItemStyle(item: TvMenuItem, view: TextView, hasFocus: Boolean) {
+        val selected = selectedMenuItem == item
+        view.text = if (selected) "▶ ${item.label}" else item.label
+        view.textSize = if (selected || hasFocus) 22f else 18f
+        view.setTextColor(
+            when {
+                selected -> Color.WHITE
+                hasFocus -> 0xffeeeeee.toInt()
+                else -> 0xffaaaaaa.toInt()
+            },
+        )
+        view.setBackgroundColor(
+            when {
+                hasFocus -> 0xff333333.toInt()
+                selected -> 0xff1f1f1f.toInt()
+                else -> Color.TRANSPARENT
+            },
+        )
+    }
+
+    private fun updateHomeContent() {
+        if (!::statusView.isInitialized || isFullscreenPlayback) return
+
+        when (selectedMenuItem) {
+            TvMenuItem.PLAY -> {
+                setStatus("Idle")
+                instructionView.text = "请在同一网络下的投屏设备中选择本设备"
+                managementUrlView.text = "管理页面: ${publicControlUrl()}"
+            }
+            TvMenuItem.PROXY -> {
+                statusView.text = "代理"
+                instructionView.text = proxySettingsStore.load().selectedProxy()?.displayUrl() ?: "当前为直连"
+                managementUrlView.text = "请在网页管理页中添加或切换代理: ${publicControlUrl()}"
+            }
+            TvMenuItem.LOGS -> {
+                statusView.text = "日志"
+                instructionView.text = logSnapshot().takeLast(3).joinToString("\n").ifBlank { "暂无日志" }
+                managementUrlView.text = "完整日志: ${publicControlUrl()}"
+            }
+            TvMenuItem.SETTINGS -> {
+                statusView.text = "设置"
+                instructionView.text = "缓存、更新和代理配置请使用网页管理页"
+                managementUrlView.text = "管理页面: ${publicControlUrl()}"
+            }
+        }
     }
 
     private fun playUrl(source: String) {
@@ -249,8 +371,8 @@ class MainActivity : AppCompatActivity() {
 
         isFullscreenPlayback = false
         playerView.visibility = View.GONE
-        rootView.gravity = Gravity.CENTER
-        rootView.setPadding(48, 40, 48, 40)
+        rootView.gravity = Gravity.CENTER_VERTICAL
+        rootView.setPadding(32, 32, 48, 32)
         chromeViews.forEach { it.visibility = View.VISIBLE }
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
     }
@@ -263,11 +385,20 @@ class MainActivity : AppCompatActivity() {
 
     private fun handleBackPressed() {
         if (isFullscreenPlayback) {
-            stopPlayback()
+            showPlaybackExitConfirmation()
             return
         }
 
         showExitConfirmation()
+    }
+
+    private fun showPlaybackExitConfirmation() {
+        AlertDialog.Builder(this)
+            .setTitle("确认退出播放")
+            .setMessage("是否停止播放并返回主页面？")
+            .setPositiveButton("停止播放") { _, _ -> stopPlayback() }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     private fun showExitConfirmation() {
@@ -356,5 +487,16 @@ class MainActivity : AppCompatActivity() {
     private fun deviceUuid(): String {
         val androidId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID).orEmpty()
         return UUID.nameUUIDFromBytes("newrapaw-dlna-$androidId".toByteArray(Charsets.UTF_8)).toString()
+    }
+
+    private companion object {
+        const val HLS_CACHE_MAX_BYTES = 1024L * 1024L * 1024L
+    }
+
+    private enum class TvMenuItem(val label: String) {
+        PLAY("播放"),
+        PROXY("代理"),
+        LOGS("日志"),
+        SETTINGS("设置"),
     }
 }

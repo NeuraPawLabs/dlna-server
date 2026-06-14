@@ -28,15 +28,18 @@ class MainActivityFullscreenTest {
     }
 
     @Test
-    fun backExitsFullscreenBeforeConfirmingAppExit() {
+    fun backDuringFullscreenRequiresPlaybackExitConfirmation() {
         val sourcePath = Paths.get("src/main/java/labs/newrapaw/dlna/probe/MainActivity.kt")
         val source = String(Files.readAllBytes(sourcePath), Charsets.UTF_8)
 
         assertTrue(source.contains("onBackPressedDispatcher.addCallback"))
         assertTrue(source.contains("handleBackPressed()"))
         assertTrue(source.contains("if (isFullscreenPlayback)"))
-        assertTrue(source.contains("stopPlayback()"))
+        assertTrue(source.contains("showPlaybackExitConfirmation()"))
         assertTrue(source.contains("showExitConfirmation()"))
         assertTrue(source.contains("确认退出"))
+        assertTrue(source.contains("确认退出播放"))
+        assertTrue(source.contains("是否停止播放并返回主页面？"))
+        assertTrue(source.contains(".setPositiveButton(\"停止播放\")"))
     }
 }

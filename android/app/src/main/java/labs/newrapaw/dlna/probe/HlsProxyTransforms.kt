@@ -21,6 +21,13 @@ fun rewriteHlsManifest(manifest: String, manifestUrl: String, proxyBaseUrl: Stri
         .map { line -> rewriteManifestLine(line, manifestUrl, proxyBaseUrl) }
         .joinToString("\n")
 
+fun extractHlsSegmentUrls(manifest: String, manifestUrl: String): List<String> =
+    manifest.lineSequence()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() && !it.startsWith("#") }
+        .map { URI(manifestUrl).resolve(it).toString() }
+        .toList()
+
 fun stripPngWrapperFromSegment(segment: ByteArray): ByteArray {
     val offset = findMpegTsOffset(segment)
     return if (offset > 0) segment.copyOfRange(offset, segment.size) else segment

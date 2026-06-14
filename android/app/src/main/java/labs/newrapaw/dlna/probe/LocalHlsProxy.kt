@@ -18,6 +18,8 @@ class LocalHlsProxy(
     private val client: OkHttpClient = OkHttpClient(),
     private val log: (String) -> Unit,
     private val getLogs: () -> List<String> = { emptyList() },
+    private val proxySettingsStore: ProxySettingsStore = InMemoryProxySettingsStore(),
+    private val segmentCache: HlsSegmentCache? = null,
     private val dlnaConfig: () -> DlnaDeviceConfig? = { null },
     private val onPlayRequested: (String) -> Unit = {},
     private val onStopRequested: () -> Unit = {},
@@ -26,6 +28,7 @@ class LocalHlsProxy(
 ) : Closeable {
     private val running = AtomicBoolean(false)
     private val executor: ExecutorService = Executors.newCachedThreadPool()
+    private val prefetchExecutor: ExecutorService = Executors.newFixedThreadPool(2)
     private val renderer = DlnaRendererController(
         log = log,
         onPlayRequested = onPlayRequested,
@@ -58,6 +61,7 @@ class LocalHlsProxy(
     override fun close() {
         running.set(false)
         runCatching { serverSocket?.close() }
+        prefetchExecutor.shutdownNow()
         executor.shutdownNow()
     }
 
@@ -92,6 +96,10 @@ class LocalHlsProxy(
                     method == "POST" && path.startsWith("/control/play") -> handlePlayRequest(body, output)
                     method == "POST" && path.startsWith("/control/stop") -> handleStopRequest(output)
                     method == "POST" && path.startsWith("/control/update") -> handleUpdateRequest(body, output)
+                    method == "POST" && path.startsWith("/control/proxy/add") -> handleProxyAddRequest(body, output)
+                    method == "POST" && path.startsWith("/control/proxy/select") -> handleProxySelectRequest(body, output)
+                    method == "POST" && path.startsWith("/control/proxy/delete") -> handleProxyDeleteRequest(body, output)
+                    method == "POST" && path.startsWith("/control/cache/clear") -> handleCacheClearRequest(output)
                     path.startsWith("/proxy/hls.m3u8") -> handleManifest(path, output)
                     path.startsWith("/proxy/segment.ts") -> handleSegment(path, output)
                     else -> writeText(output, 404, "text/plain", "Not Found")
@@ -113,6 +121,8 @@ class LocalHlsProxy(
                 deviceName = "NewraPaw DLNA Probe",
                 status = "Ready",
                 localPlaybackUrl = baseUrl,
+                proxySettings = proxySettingsStore.load(),
+                cacheStats = cacheStats(),
                 logs = getLogs(),
             ),
         )
@@ -187,6 +197,58 @@ class LocalHlsProxy(
         writeText(output, 200, "text/html", "Update request sent. Confirm installation on the TV.")
     }
 
+    private fun handleProxyAddRequest(body: String, output: OutputStream) {
+        val proxyUrl = decodeFormValue(body, "proxyUrl")
+        val config = proxyUrl?.let(::parseProxyConfig)
+        if (config == null) {
+            writeText(output, 400, "text/html", "Invalid proxy URL. Use http://host:port, socks5://host:port, or socks5h://host:port.")
+            return
+        }
+
+        val next = proxySettingsStore.load().add(config).select(config.id)
+        proxySettingsStore.save(next)
+        safeLog("Proxy selected: ${config.displayUrl()}")
+        writeText(output, 200, "text/html", "Proxy saved: ${config.displayUrl()}")
+    }
+
+    private fun handleProxySelectRequest(body: String, output: OutputStream) {
+        val proxyId = decodeFormValue(body, "proxyId")
+        if (proxyId == null) {
+            writeText(output, 400, "text/html", "Missing proxyId")
+            return
+        }
+
+        val current = proxySettingsStore.load()
+        val next = current.select(proxyId)
+        if (next.selectedProxyId != proxyId) {
+            writeText(output, 400, "text/html", "Unknown proxy")
+            return
+        }
+
+        proxySettingsStore.save(next)
+        safeLog("Proxy selected: ${next.selectedProxy()?.displayUrl() ?: "Direct"}")
+        writeText(output, 200, "text/html", "Proxy selected")
+    }
+
+    private fun handleProxyDeleteRequest(body: String, output: OutputStream) {
+        val proxyId = decodeFormValue(body, "proxyId")
+        if (proxyId == null || proxyId == ProxySettingsState.DIRECT_PROXY_ID) {
+            writeText(output, 400, "text/html", "Missing proxyId")
+            return
+        }
+
+        val next = proxySettingsStore.load().remove(proxyId)
+        proxySettingsStore.save(next)
+        safeLog("Proxy deleted: $proxyId")
+        writeText(output, 200, "text/html", "Proxy deleted")
+    }
+
+    private fun handleCacheClearRequest(output: OutputStream) {
+        segmentCache?.clear()
+        safeLog("HLS cache cleared")
+        writeText(output, 200, "text/html", "Cache cleared")
+    }
+
     private fun handleManifest(path: String, output: OutputStream) {
         val upstreamUrl = extractUrl(path)
         if (upstreamUrl == null) {
@@ -195,7 +257,7 @@ class LocalHlsProxy(
         }
 
         safeLog("Proxy manifest: $upstreamUrl")
-        val response = client.newCall(Request.Builder().url(upstreamUrl).build()).execute()
+        val response = upstreamClient().newCall(Request.Builder().url(upstreamUrl).build()).execute()
         response.use {
             if (!it.isSuccessful) {
                 val failure = formatUpstreamFailure(
@@ -208,6 +270,7 @@ class LocalHlsProxy(
                 return
             }
             val manifest = it.body?.string().orEmpty()
+            scheduleSegmentPrefetch(manifest, upstreamUrl)
             writeText(output, 200, "application/vnd.apple.mpegurl", rewriteHlsManifest(manifest, upstreamUrl, baseUrl))
         }
     }
@@ -219,20 +282,17 @@ class LocalHlsProxy(
             return
         }
 
-        val response = client.newCall(Request.Builder().url(upstreamUrl).build()).execute()
-        response.use {
-            if (!it.isSuccessful) {
-                val failure = formatUpstreamFailure(
-                    statusCode = it.code,
-                    statusMessage = it.message,
-                    body = it.body?.string().orEmpty(),
-                )
-                safeLog("Proxy segment failed: $failure $upstreamUrl")
-                writeText(output, it.code, "text/plain", "Upstream segment failed: $failure")
-                return
+        runCatching {
+            cachedOrFetchSegment(upstreamUrl)
+        }.onSuccess { bytes ->
+            writeBytes(output, 200, "video/mp2t", bytes)
+        }.onFailure { error ->
+            if (error is UpstreamSegmentException) {
+                safeLog("Proxy segment failed: ${error.failure} $upstreamUrl")
+                writeText(output, error.statusCode, "text/plain", "Upstream segment failed: ${error.failure}")
+            } else {
+                throw error
             }
-            val bytes = it.body?.bytes() ?: ByteArray(0)
-            writeBytes(output, 200, "video/mp2t", stripPngWrapperFromSegment(bytes))
         }
     }
 
@@ -244,6 +304,49 @@ class LocalHlsProxy(
         }.toMap()
         return params["u"]?.let(::decodeProxyUrl) ?: params["url"]
     }
+
+    private fun upstreamClient(): OkHttpClient {
+        val proxy = proxySettingsStore.load().selectedProxy() ?: return client
+        safeLog("Using proxy: ${proxy.displayUrl()}")
+        return client.newBuilder()
+            .proxy(proxy.toJavaProxy())
+            .build()
+    }
+
+    private fun cachedOrFetchSegment(upstreamUrl: String): ByteArray =
+        segmentCache?.getOrFetch(upstreamUrl) { fetchSegmentBytes(upstreamUrl) }
+            ?: fetchSegmentBytes(upstreamUrl)
+
+    private fun fetchSegmentBytes(upstreamUrl: String): ByteArray {
+        val response = upstreamClient().newCall(Request.Builder().url(upstreamUrl).build()).execute()
+        response.use {
+            if (!it.isSuccessful) {
+                val failure = formatUpstreamFailure(
+                    statusCode = it.code,
+                    statusMessage = it.message,
+                    body = it.body?.string().orEmpty(),
+                )
+                throw UpstreamSegmentException(it.code, failure)
+            }
+            val bytes = it.body?.bytes() ?: ByteArray(0)
+            return stripPngWrapperFromSegment(bytes)
+        }
+    }
+
+    private fun scheduleSegmentPrefetch(manifest: String, manifestUrl: String) {
+        val cache = segmentCache ?: return
+        extractHlsSegmentUrls(manifest, manifestUrl)
+            .take(PREFETCH_SEGMENT_COUNT)
+            .forEach { segmentUrl ->
+                cache.prefetch(segmentUrl, prefetchExecutor) {
+                    safeLog("Prefetch segment: $segmentUrl")
+                    fetchSegmentBytes(segmentUrl)
+                }
+            }
+    }
+
+    private fun cacheStats(): HlsSegmentCacheStats =
+        segmentCache?.stats() ?: HlsSegmentCacheStats(entries = 0, sizeBytes = 0, hits = 0, misses = 0, inFlight = 0)
 
     private fun readBody(reader: BufferedReader, length: Int): String {
         if (length <= 0) return ""
@@ -288,5 +391,14 @@ class LocalHlsProxy(
 
     private fun safeLog(message: String) {
         runCatching { log(message) }
+    }
+
+    private class UpstreamSegmentException(
+        val statusCode: Int,
+        val failure: String,
+    ) : RuntimeException(failure)
+
+    private companion object {
+        const val PREFETCH_SEGMENT_COUNT = 4
     }
 }

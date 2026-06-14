@@ -6,6 +6,8 @@ fun buildControlPage(
     deviceName: String,
     status: String,
     localPlaybackUrl: String,
+    proxySettings: ProxySettingsState,
+    cacheStats: HlsSegmentCacheStats,
     logs: List<String>,
 ): String = """
     <!doctype html>
@@ -15,37 +17,92 @@ fun buildControlPage(
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>$deviceName</title>
         <style>
-          body { font-family: sans-serif; margin: 24px; line-height: 1.4; }
+          body { font-family: sans-serif; margin: 0; line-height: 1.4; color: #1f2933; background: #f6f7f9; }
+          .shell { display: flex; min-height: 100vh; }
+          nav { width: 180px; padding: 24px 18px; background: #111827; color: white; box-sizing: border-box; }
+          nav h1 { font-size: 18px; margin: 0 0 24px; line-height: 1.2; }
+          nav a { display: block; color: #d1d5db; text-decoration: none; padding: 10px 0; }
+          nav a:hover { color: white; }
+          main { flex: 1; padding: 24px; box-sizing: border-box; }
+          section { margin-bottom: 28px; background: white; border: 1px solid #e5e7eb; padding: 18px; }
           textarea { width: 100%; height: 180px; font-family: monospace; }
-          button { font-size: 18px; padding: 10px 16px; margin-top: 10px; }
-          .status { margin: 12px 0; padding: 10px; background: #f2f2f2; }
+          input[type="text"] { width: 100%; box-sizing: border-box; font-size: 16px; padding: 10px; }
+          button { font-size: 16px; padding: 9px 14px; margin-top: 10px; }
+          .status { margin: 0 0 18px; padding: 10px; background: #eef2ff; }
+          .proxy-row { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid #eee; }
+          .proxy-row code { flex: 1; word-break: break-all; }
           #logs { min-height: 220px; padding: 10px; overflow: auto; background: #111; color: #eee; white-space: pre-wrap; }
+          @media (max-width: 720px) {
+            .shell { display: block; }
+            nav { width: auto; }
+            nav a { display: inline-block; margin-right: 14px; }
+          }
         </style>
       </head>
       <body>
-        <h1>$deviceName</h1>
-        <div class="status">Status: $status<br>Local playback proxy: $localPlaybackUrl</div>
-        <form method="post" action="/control/play">
-          <label for="url">Paste m3u8 URL</label>
-          <textarea id="url" name="url" autofocus></textarea>
-          <button type="submit">Play</button>
-        </form>
-        <form method="post" action="/control/stop">
-          <button type="submit">Stop</button>
-        </form>
-        <hr>
-        <form method="post" action="/control/update">
-          <label for="apkUrl">Paste APK URL</label>
-          <textarea id="apkUrl" name="apkUrl"></textarea>
-          <button type="submit">Install Update</button>
-        </form>
-        <hr>
-        <h2>Logs</h2>
-        <pre id="logs">${escapeHtml(logs.joinToString("\n"))}</pre>
+        <div class="shell">
+          <nav>
+            <h1>$deviceName</h1>
+            <a href="#play">播放</a>
+            <a href="#proxy">代理</a>
+            <a href="#cache">缓存</a>
+            <a href="#logs">日志</a>
+            <a href="#update">更新</a>
+          </nav>
+          <main>
+            <div class="status">Status: $status<br>Local playback proxy: $localPlaybackUrl<br>Current network: ${escapeHtml(proxyStatus(proxySettings))}</div>
+            <section id="play">
+              <h2>播放</h2>
+              <form method="post" action="/control/play">
+                <label for="url">Paste m3u8 URL</label>
+                <textarea id="url" name="url" autofocus></textarea>
+                <button type="submit">Play</button>
+              </form>
+              <form method="post" action="/control/stop">
+                <button type="submit">Stop</button>
+              </form>
+            </section>
+            <section id="proxy">
+              <h2>代理</h2>
+              <form method="post" action="/control/proxy/add">
+                <label for="proxyUrl">Proxy URL</label>
+                <input id="proxyUrl" name="proxyUrl" type="text" placeholder="http://127.0.0.1:7890 或 socks5h://proxy.example:1080">
+                <button type="submit">Add and Use</button>
+              </form>
+              <form method="post" action="/control/proxy/select">
+                ${proxyOptionsHtml(proxySettings)}
+                <button type="submit">Use Selected Proxy</button>
+              </form>
+            </section>
+            <section id="cache">
+              <h2>缓存</h2>
+              <p>Entries: ${cacheStats.entries}</p>
+              <p>Size: ${formatBytes(cacheStats.sizeBytes)}</p>
+              <p>Hits: ${cacheStats.hits}</p>
+              <p>Misses: ${cacheStats.misses}</p>
+              <p>In flight: ${cacheStats.inFlight}</p>
+              <form method="post" action="/control/cache/clear">
+                <button type="submit">Clear Cache</button>
+              </form>
+            </section>
+            <section id="logs">
+              <h2>日志</h2>
+              <pre id="log-content">${escapeHtml(logs.joinToString("\n"))}</pre>
+            </section>
+            <section id="update">
+              <h2>更新</h2>
+              <form method="post" action="/control/update">
+                <label for="apkUrl">Paste APK URL</label>
+                <textarea id="apkUrl" name="apkUrl"></textarea>
+                <button type="submit">Install Update</button>
+              </form>
+            </section>
+          </main>
+        </div>
         <script>
           async function refreshLogs() {
             const response = await fetch('/logs', { cache: 'no-store' });
-            document.getElementById('logs').textContent = await response.text();
+            document.getElementById('log-content').textContent = await response.text();
           }
           setInterval(refreshLogs, 1000);
           refreshLogs();
@@ -74,3 +131,36 @@ private fun escapeHtml(value: String): String =
         .replace(">", "&gt;")
         .replace("\"", "&quot;")
         .replace("'", "&#39;")
+
+private fun proxyStatus(settings: ProxySettingsState): String =
+    settings.selectedProxy()?.displayUrl() ?: "Direct"
+
+private fun proxyOptionsHtml(settings: ProxySettingsState): String {
+    val directChecked = if (settings.selectedProxyId == ProxySettingsState.DIRECT_PROXY_ID) " checked" else ""
+    val direct = """
+        <div class="proxy-row">
+          <label><input type="radio" name="proxyId" value="direct"$directChecked> Direct</label>
+        </div>
+    """.trimIndent()
+
+    val proxies = settings.proxies.joinToString("\n") { proxy ->
+        val checked = if (settings.selectedProxyId == proxy.id) " checked" else ""
+        """
+        <div class="proxy-row">
+          <label><input type="radio" name="proxyId" value="${escapeHtml(proxy.id)}"$checked></label>
+          <code>${escapeHtml(proxy.displayUrl())}</code>
+          <button type="submit" formaction="/control/proxy/delete" formmethod="post" name="proxyId" value="${escapeHtml(proxy.id)}">Delete</button>
+        </div>
+        """.trimIndent()
+    }
+
+    return listOf(direct, proxies).filter { it.isNotBlank() }.joinToString("\n")
+}
+
+private fun formatBytes(bytes: Long): String =
+    when {
+        bytes >= 1024L * 1024L * 1024L -> "%.1f GB".format(bytes.toDouble() / 1024.0 / 1024.0 / 1024.0)
+        bytes >= 1024L * 1024L -> "%.1f MB".format(bytes.toDouble() / 1024.0 / 1024.0)
+        bytes >= 1024L -> "%.1f KB".format(bytes.toDouble() / 1024.0)
+        else -> "$bytes B"
+    }
