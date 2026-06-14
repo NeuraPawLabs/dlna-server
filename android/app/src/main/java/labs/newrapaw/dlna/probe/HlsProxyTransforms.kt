@@ -1,19 +1,13 @@
 package labs.newrapaw.dlna.probe
 
-import android.util.Base64
 import java.net.URI
+import java.util.Base64
 
 fun encodeProxyUrl(url: String): String =
-    Base64.encodeToString(
-        url.toByteArray(Charsets.UTF_8),
-        Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
-    )
+    Base64.getUrlEncoder().withoutPadding().encodeToString(url.toByteArray(Charsets.UTF_8))
 
 fun decodeProxyUrl(encoded: String): String =
-    String(
-        Base64.decode(encoded, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING),
-        Charsets.UTF_8,
-    )
+    String(Base64.getUrlDecoder().decode(encoded), Charsets.UTF_8)
 
 fun isLikelyHlsManifest(url: String): Boolean =
     Regex("""\.m3u8(?:$|[/?#&=;%])""", RegexOption.IGNORE_CASE).containsMatchIn(url)

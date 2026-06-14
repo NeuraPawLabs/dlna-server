@@ -14,7 +14,7 @@ The app is added as an independent Android project under `android/` so the Linux
 
 The first target is Honor Smart Screen, which may not behave like a standard Android TV device. The APK should use ordinary Android app packaging rather than relying on Android TV-only distribution assumptions.
 
-The first build targets modern Android APIs while keeping the app simple enough to sideload. It uses AndroidX Media3 ExoPlayer for playback. Android official documentation lists Media3 as the current Jetpack media library, and its release page currently shows Media3 `1.10.0`. The app must allow local cleartext HTTP because ExoPlayer will read from `http://127.0.0.1:<port>/...`; Android network security configuration supports explicit cleartext opt-in for such cases.
+The first build targets modern Android APIs while keeping the app simple enough to sideload. It uses AndroidX Media3 ExoPlayer for playback. Android official documentation lists Media3 as the current Jetpack media library, and its release page currently shows Media3 `1.10.0`, which requires compiling against Android API 36 or newer. The app must allow local cleartext HTTP because ExoPlayer will read from `http://127.0.0.1:<port>/...`; Android network security configuration supports explicit cleartext opt-in for such cases.
 
 ## User Experience
 

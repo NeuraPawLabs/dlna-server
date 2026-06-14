@@ -5,7 +5,16 @@ plugins {
 
 android {
     namespace = "labs.newrapaw.dlna.probe"
-    compileSdk = 35
+    compileSdk = 36
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
 
     defaultConfig {
         applicationId = "labs.newrapaw.dlna.probe"

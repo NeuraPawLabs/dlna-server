@@ -5,7 +5,7 @@ This probe validates APK installation and playback on Honor Smart Screen before 
 ## Local Build Requirements
 
 - JDK 17
-- Android SDK with platform 35
+- Android SDK with platform 36
 - Android build-tools
 
 Check the local toolchain:
@@ -13,7 +13,7 @@ Check the local toolchain:
 ```bash
 java -version
 echo "$ANDROID_HOME"
-ls "$ANDROID_HOME/platforms/android-35"
+ls "$ANDROID_HOME/platforms/android-36"
 ```
 
 ## Build
