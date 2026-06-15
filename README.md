@@ -1,20 +1,18 @@
 # PawCast
 
-Android DLNA Digital Media Renderer for Honor Smart Screen. Advertises the device as a media receiver on the local network, accepts UPnP AVTransport and RenderingControl SOAP commands, and plays pushed media URLs through ExoPlayer.
+Android DLNA Digital Media Renderer (DMR). Advertises the device as a media receiver on the local network, accepts UPnP SOAP commands from DLNA controllers, and plays pushed media URLs through ExoPlayer.
 
 ## Features
 
-- SSDP discovery by DLNA controllers on the same LAN
-- UPnP AVTransport, RenderingControl, and ConnectionManager services
-- Local HLS proxy with PNG-wrapped segment stripping
-- HLS segment caching and prefetch
-- Upstream direct/proxy race mode
-- Web-based control page for remote play, proxy management, and APK updates
-
-## Requirements
-
-- JDK 17
-- Android SDK with platform 36
+- **DLNA Discovery** — SSDP multicast, responds to controller search requests
+- **UPnP Services** — AVTransport, RenderingControl, ConnectionManager
+- **HLS Proxy** — rewrites upstream manifests, strips PNG wrappers from segments
+- **Segment Cache** — disk-backed LRU cache with prefetch
+- **Proxy Support** — HTTP, SOCKS5, SOCKS5H with direct/proxy race mode
+- **Web Control Page** — remote play, proxy management, cache stats, APK update
+- **TV UI** — menu-driven interface optimized for D-pad navigation
+- **Foreground Service** — keeps DLNA discoverable in background
+- **Remote APK Update** — push update URL from web page, install on device
 
 ## Build
 
@@ -22,21 +20,16 @@ Android DLNA Digital Media Renderer for Honor Smart Screen. Advertises the devic
 ./gradlew :app:assembleDebug
 ```
 
-The debug APK is at `app/build/outputs/apk/debug/app-debug.apk`.
+APK output: `app/build/outputs/apk/debug/app-debug.apk`
 
-## Device Verification
+## Release
 
-1. Install the APK on Honor Smart Screen by U disk or sideload.
-2. Launch PawCast.
-3. Open the displayed "Open on phone" URL from a phone on the same LAN.
-4. Paste an m3u8 URL and press Play.
-5. Confirm video and audio play.
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
 
-For updates, serve the APK from the control page and confirm installation on the TV.
-
-## Sideload and TV Verification
-
-See `docs/android-honor-probe.md` for detailed sideload and TV verification steps.
+This triggers CI to build and publish a signed APK as a GitHub Release.
 
 ## Scripts
 
