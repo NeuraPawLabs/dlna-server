@@ -6,6 +6,8 @@ import androidx.core.content.FileProvider
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.util.zip.ZipException
+import java.util.zip.ZipInputStream
 
 class ApkUpdater(
     private val context: Context,
@@ -20,7 +22,7 @@ class ApkUpdater(
                 response.use {
                     check(it.isSuccessful) { "APK download failed: HTTP ${it.code}" }
                     val bytes = it.body?.bytes() ?: ByteArray(0)
-                    check(bytes.isNotEmpty()) { "APK download returned empty body" }
+                    validateApkDownload(bytes)?.let { message -> error(message) }
 
                     val updateDir = File(context.cacheDir, "updates").apply { mkdirs() }
                     val apkFile = File(updateDir, "newrapaw-dlna-probe-update.apk")
@@ -47,5 +49,27 @@ class ApkUpdater(
         }
         context.startActivity(intent)
         log("Installer launched")
+    }
+}
+
+internal fun validateApkDownload(bytes: ByteArray): String? {
+    if (bytes.isEmpty()) return "APK download returned empty body"
+
+    return try {
+        ZipInputStream(bytes.inputStream()).use { zip ->
+            var sawZipEntry = false
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                sawZipEntry = true
+                if (entry.name == "AndroidManifest.xml") return null
+            }
+            if (sawZipEntry) {
+                "Downloaded file is a zip archive, not an APK. GitHub Actions artifacts download as zip files; extract the APK first or use a GitHub Release APK asset URL."
+            } else {
+                "Downloaded file is not an APK. Check that the URL points directly to an .apk file."
+            }
+        }
+    } catch (_: ZipException) {
+        "Downloaded file is not an APK. Check that the URL points directly to an .apk file."
     }
 }

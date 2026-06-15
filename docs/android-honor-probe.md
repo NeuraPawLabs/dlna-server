@@ -67,3 +67,12 @@ http://<dev-machine-ip>:8080/app-debug.apk
 Press `Install Update`. The TV downloads the APK and opens the system installer. Confirm the install on the TV.
 
 Android does not allow this debug app to silently update itself, so the final confirmation click on the TV is still required.
+
+When using GitHub Actions output, download the debug artifact and unzip it first.
+GitHub artifact downloads are zip archives that contain `app-debug.apk`; the zip
+itself is not installable. For tagged releases, use the `app-release.apk` asset
+attached to the GitHub Release.
+
+Updates can only replace an installed app when the existing app and new APK use
+the same signing key. Switches between debug and release builds, or between two
+different release keystores, require uninstalling the old app first.

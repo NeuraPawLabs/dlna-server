@@ -25,9 +25,16 @@ jobs:
       - name: Build debug APK
         run: ./gradlew :app:assembleDebug
 
+      - name: Verify debug APK
+        run: |
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
+          AAPT="$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -n 1)"
+          "$APKSIGNER" verify --verbose app/build/outputs/apk/debug/app-debug.apk
+          "$AAPT" dump badging app/build/outputs/apk/debug/app-debug.apk | head -n 20
+
       - uses: actions/upload-artifact@v4
         with:
-          name: debug-apk
+          name: debug-apk-unzip-before-install
           path: app/build/outputs/apk/debug/app-debug.apk
 
   release:
@@ -59,6 +66,13 @@ jobs:
           VERSION_CODE: ${{ github.run_number }}
           VERSION_NAME: ${{ github.ref_name }}
         run: ./gradlew :app:assembleRelease
+
+      - name: Verify release APK
+        run: |
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
+          AAPT="$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -n 1)"
+          "$APKSIGNER" verify --verbose app/build/outputs/apk/release/app-release.apk
+          "$AAPT" dump badging app/build/outputs/apk/release/app-release.apk | head -n 20
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
