@@ -1,5 +1,6 @@
 package labs.newrapaw.dlna.probe
 
+import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.BufferedReader
@@ -7,11 +8,16 @@ import java.io.Closeable
 import java.io.InputStreamReader
 import java.io.OutputStream
 import java.net.InetAddress
+import java.net.Proxy
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLDecoder
+import java.util.concurrent.Callable
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.ExecutorCompletionService
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.atomic.AtomicBoolean
 
 class LocalHlsProxy(
@@ -29,6 +35,7 @@ class LocalHlsProxy(
     private val running = AtomicBoolean(false)
     private val executor: ExecutorService = Executors.newCachedThreadPool()
     private val prefetchExecutor: ExecutorService = Executors.newFixedThreadPool(2)
+    private val upstreamRaceExecutor: ExecutorService = Executors.newCachedThreadPool()
     private val renderer = DlnaRendererController(
         log = log,
         onPlayRequested = onPlayRequested,
@@ -61,6 +68,7 @@ class LocalHlsProxy(
     override fun close() {
         running.set(false)
         runCatching { serverSocket?.close() }
+        upstreamRaceExecutor.shutdownNow()
         prefetchExecutor.shutdownNow()
         executor.shutdownNow()
     }
@@ -219,7 +227,8 @@ class LocalHlsProxy(
         }
 
         val current = proxySettingsStore.load()
-        val next = current.select(proxyId)
+        val mode = decodeFormValue(body, "upstreamMode")?.let(::parseUpstreamMode) ?: current.upstreamMode
+        val next = current.select(proxyId).withUpstreamMode(mode)
         if (next.selectedProxyId != proxyId) {
             writeText(output, 400, "text/html", "Unknown proxy")
             return
@@ -229,6 +238,9 @@ class LocalHlsProxy(
         safeLog("Proxy selected: ${next.selectedProxy()?.displayUrl() ?: "Direct"}")
         writeText(output, 200, "text/html", "Proxy selected")
     }
+
+    private fun parseUpstreamMode(value: String): UpstreamMode =
+        runCatching { UpstreamMode.valueOf(value) }.getOrDefault(UpstreamMode.PROXY_ONLY)
 
     private fun handleProxyDeleteRequest(body: String, output: OutputStream) {
         val proxyId = decodeFormValue(body, "proxyId")
@@ -257,21 +269,18 @@ class LocalHlsProxy(
         }
 
         safeLog("Proxy manifest: $upstreamUrl")
-        val response = upstreamClient().newCall(Request.Builder().url(upstreamUrl).build()).execute()
-        response.use {
-            if (!it.isSuccessful) {
-                val failure = formatUpstreamFailure(
-                    statusCode = it.code,
-                    statusMessage = it.message,
-                    body = it.body?.string().orEmpty(),
-                )
-                safeLog("Proxy manifest failed: $failure")
-                writeText(output, it.code, "text/plain", "Upstream manifest failed: $failure")
-                return
-            }
-            val manifest = it.body?.string().orEmpty()
+        runCatching {
+            fetchUpstreamBytes(upstreamUrl).toString(Charsets.UTF_8)
+        }.onSuccess { manifest ->
             scheduleSegmentPrefetch(manifest, upstreamUrl)
             writeText(output, 200, "application/vnd.apple.mpegurl", rewriteHlsManifest(manifest, upstreamUrl, baseUrl))
+        }.onFailure { error ->
+            if (error is UpstreamFetchException) {
+                safeLog("Proxy manifest failed: ${error.failure}")
+                writeText(output, error.statusCode, "text/plain", "Upstream manifest failed: ${error.failure}")
+            } else {
+                throw error
+            }
         }
     }
 
@@ -287,7 +296,7 @@ class LocalHlsProxy(
         }.onSuccess { bytes ->
             writeBytes(output, 200, "video/mp2t", bytes)
         }.onFailure { error ->
-            if (error is UpstreamSegmentException) {
+            if (error is UpstreamFetchException) {
                 safeLog("Proxy segment failed: ${error.failure} $upstreamUrl")
                 writeText(output, error.statusCode, "text/plain", "Upstream segment failed: ${error.failure}")
             } else {
@@ -305,20 +314,39 @@ class LocalHlsProxy(
         return params["u"]?.let(::decodeProxyUrl) ?: params["url"]
     }
 
-    private fun upstreamClient(): OkHttpClient {
-        val proxy = proxySettingsStore.load().selectedProxy() ?: return client
-        safeLog("Using proxy: ${proxy.displayUrl()}")
-        return client.newBuilder()
-            .proxy(proxy.toJavaProxy())
-            .build()
-    }
-
     private fun cachedOrFetchSegment(upstreamUrl: String): ByteArray =
         segmentCache?.getOrFetch(upstreamUrl) { fetchSegmentBytes(upstreamUrl) }
             ?: fetchSegmentBytes(upstreamUrl)
 
     private fun fetchSegmentBytes(upstreamUrl: String): ByteArray {
-        val response = upstreamClient().newCall(Request.Builder().url(upstreamUrl).build()).execute()
+        val bytes = fetchUpstreamBytes(upstreamUrl)
+        return stripPngWrapperFromSegment(bytes)
+    }
+
+    private fun fetchUpstreamBytes(upstreamUrl: String): ByteArray {
+        val settings = proxySettingsStore.load()
+        val proxy = settings.selectedProxy()
+        return when {
+            proxy == null -> executeUpstreamCall(upstreamUrl, directClient(), "direct")
+            settings.upstreamMode == UpstreamMode.RACE_DIRECT_AND_PROXY -> raceUpstreamCalls(upstreamUrl, proxy)
+            else -> {
+                safeLog("Using proxy: ${proxy.displayUrl()}")
+                executeUpstreamCall(upstreamUrl, proxyClient(proxy), "proxy")
+            }
+        }
+    }
+
+    private fun executeUpstreamCall(upstreamUrl: String, client: OkHttpClient, source: String): ByteArray {
+        val call = client.newCall(Request.Builder().url(upstreamUrl).build())
+        return runCatching { executeCall(call) }
+            .getOrElse { error ->
+                if (error is UpstreamFetchException) throw error
+                throw UpstreamFetchException(502, "$source: ${error::class.java.simpleName}: ${error.message}")
+            }
+    }
+
+    private fun executeCall(call: Call): ByteArray {
+        val response = call.execute()
         response.use {
             if (!it.isSuccessful) {
                 val failure = formatUpstreamFailure(
@@ -326,12 +354,72 @@ class LocalHlsProxy(
                     statusMessage = it.message,
                     body = it.body?.string().orEmpty(),
                 )
-                throw UpstreamSegmentException(it.code, failure)
+                throw UpstreamFetchException(it.code, failure)
             }
-            val bytes = it.body?.bytes() ?: ByteArray(0)
-            return stripPngWrapperFromSegment(bytes)
+            return it.body?.bytes() ?: ByteArray(0)
         }
     }
+
+    private fun raceUpstreamCalls(upstreamUrl: String, proxy: ProxyConfig): ByteArray {
+        val directCall = directClient().newCall(Request.Builder().url(upstreamUrl).build())
+        val proxyCall = proxyClient(proxy).newCall(Request.Builder().url(upstreamUrl).build())
+        val completion = ExecutorCompletionService<UpstreamRaceResult>(upstreamRaceExecutor)
+        val futures = listOf(
+            completion.submit(Callable { executeRaceCall("direct", directCall) }),
+            completion.submit(Callable { executeRaceCall("proxy", proxyCall) }),
+        )
+        val failures = mutableListOf<String>()
+
+        repeat(futures.size) {
+            val result = completion.take().getOrFailure()
+            if (result.bytes != null) {
+                safeLog("Upstream race winner: ${result.source}")
+                cancelRaceLosers(futures, directCall, proxyCall)
+                return result.bytes
+            }
+            failures.add("${result.source}: ${result.failure}")
+        }
+
+        throw UpstreamFetchException(502, failures.joinToString("; "))
+    }
+
+    private fun executeRaceCall(source: String, call: Call): UpstreamRaceResult =
+        runCatching {
+            UpstreamRaceResult(source = source, bytes = executeCall(call), failure = null)
+        }.getOrElse {
+            UpstreamRaceResult(source = source, bytes = null, failure = "${it::class.java.simpleName}: ${it.message}")
+        }
+
+    private fun cancelRaceLosers(
+        futures: List<Future<UpstreamRaceResult>>,
+        directCall: Call,
+        proxyCall: Call,
+    ) {
+        futures.forEach { it.cancel(true) }
+        directCall.cancel()
+        proxyCall.cancel()
+    }
+
+    private fun Future<UpstreamRaceResult>.getOrFailure(): UpstreamRaceResult =
+        try {
+            get()
+        } catch (error: ExecutionException) {
+            UpstreamRaceResult(
+                source = "unknown",
+                bytes = null,
+                failure = "${error.cause?.javaClass?.simpleName ?: error::class.java.simpleName}: ${error.cause?.message ?: error.message}",
+            )
+        }
+
+    private fun directClient(): OkHttpClient =
+        client.newBuilder()
+            .proxy(Proxy.NO_PROXY)
+            .build()
+
+    private fun proxyClient(proxy: ProxyConfig): OkHttpClient =
+        client.newBuilder()
+            .proxy(proxy.toJavaProxy())
+            .build()
 
     private fun scheduleSegmentPrefetch(manifest: String, manifestUrl: String) {
         val cache = segmentCache ?: return
@@ -393,7 +481,13 @@ class LocalHlsProxy(
         runCatching { log(message) }
     }
 
-    private class UpstreamSegmentException(
+    private data class UpstreamRaceResult(
+        val source: String,
+        val bytes: ByteArray?,
+        val failure: String?,
+    )
+
+    private class UpstreamFetchException(
         val statusCode: Int,
         val failure: String,
     ) : RuntimeException(failure)

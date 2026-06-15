@@ -71,6 +71,7 @@ fun buildControlPage(
               </form>
               <form method="post" action="/control/proxy/select">
                 ${proxyOptionsHtml(proxySettings)}
+                ${upstreamModeHtml(proxySettings)}
                 <button type="submit">Use Selected Proxy</button>
               </form>
             </section>
@@ -155,6 +156,18 @@ private fun proxyOptionsHtml(settings: ProxySettingsState): String {
     }
 
     return listOf(direct, proxies).filter { it.isNotBlank() }.joinToString("\n")
+}
+
+private fun upstreamModeHtml(settings: ProxySettingsState): String {
+    val proxyOnlyChecked = if (settings.upstreamMode == UpstreamMode.PROXY_ONLY) " checked" else ""
+    val raceChecked = if (settings.upstreamMode == UpstreamMode.RACE_DIRECT_AND_PROXY) " checked" else ""
+    val disabled = if (settings.selectedProxy() == null) " disabled" else ""
+    return """
+        <div>
+          <label><input type="radio" name="upstreamMode" value="PROXY_ONLY"$proxyOnlyChecked$disabled> 仅代理</label>
+          <label><input type="radio" name="upstreamMode" value="RACE_DIRECT_AND_PROXY"$raceChecked$disabled> 直连 + 代理竞速</label>
+        </div>
+    """.trimIndent()
 }
 
 private fun formatBytes(bytes: Long): String =

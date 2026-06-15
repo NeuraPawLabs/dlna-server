@@ -62,6 +62,7 @@ class ControlPageTest {
             proxySettings = ProxySettingsState(
                 proxies = listOf(ProxyConfig("proxy-1", ProxyType.HTTP, "192.168.1.2", 7890)),
                 selectedProxyId = "proxy-1",
+                upstreamMode = UpstreamMode.RACE_DIRECT_AND_PROXY,
             ),
             cacheStats = HlsSegmentCacheStats(entries = 0, sizeBytes = 0, hits = 0, misses = 0, inFlight = 0),
             logs = emptyList(),
@@ -72,6 +73,10 @@ class ControlPageTest {
         assertTrue(html.contains("action=\"/control/proxy/select\""))
         assertTrue(html.contains("action=\"/control/proxy/delete\""))
         assertTrue(html.contains("value=\"direct\""))
+        assertTrue(html.contains("name=\"upstreamMode\""))
+        assertTrue(html.contains("value=\"PROXY_ONLY\""))
+        assertTrue(html.contains("value=\"RACE_DIRECT_AND_PROXY\""))
+        assertTrue(html.contains("直连 + 代理竞速"))
         assertTrue(html.contains("http://192.168.1.2:7890"))
         assertTrue(html.contains("checked"))
     }

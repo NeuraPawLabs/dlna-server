@@ -13,6 +13,11 @@ enum class ProxyType(val scheme: String) {
     SOCKS5H("socks5h"),
 }
 
+enum class UpstreamMode {
+    PROXY_ONLY,
+    RACE_DIRECT_AND_PROXY,
+}
+
 data class ProxyConfig(
     val id: String,
     val type: ProxyType,
@@ -34,6 +39,7 @@ data class ProxyConfig(
 data class ProxySettingsState(
     val proxies: List<ProxyConfig> = emptyList(),
     val selectedProxyId: String = DIRECT_PROXY_ID,
+    val upstreamMode: UpstreamMode = UpstreamMode.PROXY_ONLY,
 ) {
     fun selectedProxy(): ProxyConfig? =
         proxies.firstOrNull { it.id == selectedProxyId }
@@ -43,15 +49,25 @@ data class ProxySettingsState(
 
     fun select(proxyId: String): ProxySettingsState =
         if (proxyId == DIRECT_PROXY_ID || proxies.any { it.id == proxyId }) {
-            copy(selectedProxyId = proxyId)
+            copy(
+                selectedProxyId = proxyId,
+                upstreamMode = if (proxyId == DIRECT_PROXY_ID) UpstreamMode.PROXY_ONLY else upstreamMode,
+            )
         } else {
             this
         }
 
+    fun withUpstreamMode(mode: UpstreamMode): ProxySettingsState =
+        copy(upstreamMode = if (selectedProxy() == null) UpstreamMode.PROXY_ONLY else mode)
+
     fun remove(proxyId: String): ProxySettingsState {
         val nextProxies = proxies.filterNot { it.id == proxyId }
         val nextSelected = if (selectedProxyId == proxyId) DIRECT_PROXY_ID else selectedProxyId
-        return copy(proxies = nextProxies, selectedProxyId = nextSelected)
+        return copy(
+            proxies = nextProxies,
+            selectedProxyId = nextSelected,
+            upstreamMode = if (nextSelected == DIRECT_PROXY_ID) UpstreamMode.PROXY_ONLY else upstreamMode,
+        )
     }
 
     companion object {
@@ -101,6 +117,7 @@ class SharedPreferencesProxySettingsStore(
         }
         return JSONObject()
             .put("selectedProxyId", state.selectedProxyId)
+            .put("upstreamMode", state.upstreamMode.name)
             .put("proxies", proxies)
     }
 
@@ -117,7 +134,14 @@ class SharedPreferencesProxySettingsStore(
             }
         }
         val selected = json.optString("selectedProxyId", ProxySettingsState.DIRECT_PROXY_ID)
-        return ProxySettingsState(proxies = proxies, selectedProxyId = selected).select(selected)
+        val mode = runCatching {
+            UpstreamMode.valueOf(json.optString("upstreamMode", UpstreamMode.PROXY_ONLY.name))
+        }.getOrDefault(UpstreamMode.PROXY_ONLY)
+        return ProxySettingsState(
+            proxies = proxies,
+            selectedProxyId = selected,
+            upstreamMode = mode,
+        ).select(selected).withUpstreamMode(mode)
     }
 
     private companion object {

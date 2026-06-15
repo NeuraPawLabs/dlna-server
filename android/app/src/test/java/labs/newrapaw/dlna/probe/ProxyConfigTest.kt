@@ -50,14 +50,28 @@ class ProxyConfigTest {
     fun proxyStateCanAddSelectAndRemoveConfigs() {
         val http = ProxyConfig("a", ProxyType.HTTP, "127.0.0.1", 8080)
         val socks = ProxyConfig("b", ProxyType.SOCKS5H, "proxy.example", 1080)
-        val state = ProxySettingsState().add(http).add(socks).select("b")
+        val state = ProxySettingsState()
+            .add(http)
+            .add(socks)
+            .select("b")
+            .withUpstreamMode(UpstreamMode.RACE_DIRECT_AND_PROXY)
 
         assertEquals(socks, state.selectedProxy())
         assertEquals("b", state.selectedProxyId)
+        assertEquals(UpstreamMode.RACE_DIRECT_AND_PROXY, state.upstreamMode)
 
         val removed = state.remove("b")
         assertNull(removed.selectedProxy())
         assertEquals("direct", removed.selectedProxyId)
+        assertEquals(UpstreamMode.PROXY_ONLY, removed.upstreamMode)
         assertEquals(listOf(http), removed.proxies)
+    }
+
+    @Test
+    fun proxyStateIgnoresRaceModeWhenDirectIsSelected() {
+        val state = ProxySettingsState().withUpstreamMode(UpstreamMode.RACE_DIRECT_AND_PROXY)
+
+        assertEquals("direct", state.selectedProxyId)
+        assertEquals(UpstreamMode.PROXY_ONLY, state.upstreamMode)
     }
 }
