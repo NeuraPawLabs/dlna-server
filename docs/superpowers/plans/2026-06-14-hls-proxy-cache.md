@@ -13,8 +13,8 @@
 ### Task 1: Segment Cache Core
 
 **Files:**
-- Create: `android/app/src/main/java/labs/newrapaw/dlna/probe/HlsSegmentCache.kt`
-- Test: `android/app/src/test/java/labs/newrapaw/dlna/probe/HlsSegmentCacheTest.kt`
+- Create: `app/src/main/java/labs/newrapaw/dlna/probe/HlsSegmentCache.kt`
+- Test: `app/src/test/java/labs/newrapaw/dlna/probe/HlsSegmentCacheTest.kt`
 
 - [ ] Write failing tests for cache miss, cache hit, in-flight deduplication, and LRU trimming.
 - [ ] Implement `HlsSegmentCache.getOrFetch(url, fetcher)`, `prefetch(url, fetcher)`, `stats()`, and `clear()`.
@@ -23,10 +23,10 @@
 ### Task 2: Proxy Integration
 
 **Files:**
-- Modify: `android/app/src/main/java/labs/newrapaw/dlna/probe/LocalHlsProxy.kt`
-- Modify: `android/app/src/main/java/labs/newrapaw/dlna/probe/ControlPage.kt`
-- Test: `android/app/src/test/java/labs/newrapaw/dlna/probe/LocalHlsProxyStabilityTest.kt`
-- Test: `android/app/src/test/java/labs/newrapaw/dlna/probe/ControlPageTest.kt`
+- Modify: `app/src/main/java/labs/newrapaw/dlna/probe/LocalHlsProxy.kt`
+- Modify: `app/src/main/java/labs/newrapaw/dlna/probe/ControlPage.kt`
+- Test: `app/src/test/java/labs/newrapaw/dlna/probe/LocalHlsProxyStabilityTest.kt`
+- Test: `app/src/test/java/labs/newrapaw/dlna/probe/ControlPageTest.kt`
 
 - [ ] Write failing tests that segment requests use cached bytes and `/control/cache/clear` clears the cache.
 - [ ] Add `segmentCache` and `prefetchExecutor` to `LocalHlsProxy`.
@@ -37,7 +37,7 @@
 ### Task 3: Android Wiring and Full Verification
 
 **Files:**
-- Modify: `android/app/src/main/java/labs/newrapaw/dlna/probe/MainActivity.kt`
+- Modify: `app/src/main/java/labs/newrapaw/dlna/probe/MainActivity.kt`
 
 - [ ] Construct `HlsSegmentCache` under `cacheDir/hls-segments` with a 1GB default limit.
 - [ ] Pass the cache into `LocalHlsProxy`.

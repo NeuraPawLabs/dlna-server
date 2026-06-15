@@ -1,91 +1,46 @@
-# DLNA Server
+# PawCast
 
-Linux prototype of a DLNA Digital Media Renderer (DMR). It advertises this machine as a media receiver, accepts basic UPnP AVTransport and RenderingControl SOAP commands, and delegates playback to `mpv`.
+Android DLNA Digital Media Renderer for Honor Smart Screen. Advertises the device as a media receiver on the local network, accepts UPnP AVTransport and RenderingControl SOAP commands, and plays pushed media URLs through ExoPlayer.
+
+## Features
+
+- SSDP discovery by DLNA controllers on the same LAN
+- UPnP AVTransport, RenderingControl, and ConnectionManager services
+- Local HLS proxy with PNG-wrapped segment stripping
+- HLS segment caching and prefetch
+- Upstream direct/proxy race mode
+- Web-based control page for remote play, proxy management, and APK updates
 
 ## Requirements
 
-- Node.js 22 or newer
-- `mpv` available on `PATH`
-- Linux machine on the same LAN as the DLNA controller
+- JDK 17
+- Android SDK with platform 36
 
-Install dependencies:
-
-```bash
-npm install
-```
-
-Install `mpv` on Ubuntu/Debian:
+## Build
 
 ```bash
-sudo apt install mpv
+./gradlew :app:assembleDebug
 ```
 
-## Run
+The debug APK is at `app/build/outputs/apk/debug/app-debug.apk`.
 
-```bash
-npm run dev
-```
+## Device Verification
 
-Startup logs show the HTTP description URL and SSDP status. When a controller sends media, logs include the received URL and the URL passed to playback:
+1. Install the APK on Honor Smart Screen by U disk or sideload.
+2. Launch PawCast.
+3. Open the displayed "Open on phone" URL from a phone on the same LAN.
+4. Paste an m3u8 URL and press Play.
+5. Confirm video and audio play.
 
-```text
-[AVTransport] Set URI: http://example.test/video.mp4
-[AVTransport] Play: http://example.test/video.mp4
-```
+For updates, serve the APK from the control page and confirm installation on the TV.
 
-Useful options:
+## Sideload and TV Verification
 
-```bash
-npm run dev -- --port 49152 --name "NewraPaw DLNA Receiver" --advertise-address 192.168.1.20 --mpv-path /usr/bin/mpv
-```
-
-Use `--advertise-address` when the default `127.0.0.1` description URL is not reachable from other devices.
-Use `--mpv-path` if `mpv` is installed but not available on the service `PATH`.
-
-## Verify Locally
-
-```bash
-curl http://127.0.0.1:49152/description.xml
-```
-
-The response should include `NewraPaw DLNA Receiver` and `MediaRenderer:1`.
-
-## Verify From A DLNA Controller
-
-1. Start this service with an address reachable from the controller:
-
-   ```bash
-   npm run dev -- --advertise-address <linux-lan-ip>
-   ```
-
-2. Make sure the firewall allows UDP `1900` and TCP `49152`.
-3. Open a DLNA/UPnP controller app on a phone or desktop.
-4. Select `NewraPaw DLNA Receiver`.
-5. Push an HTTP video or audio URL.
-6. Confirm `mpv` opens and responds to play, pause, stop, and volume commands.
+See `docs/android-honor-probe.md` for detailed sideload and TV verification steps.
 
 ## Scripts
 
 ```bash
-npm test
-npm run build
-npm run dev
-npm start
+./gradlew :app:assembleDebug          # Build debug APK
+./gradlew :app:testDebugUnitTest      # Run unit tests
 ```
-
-## Android Honor Smart Screen Probe
-
-The Android probe lives in `android/`. It validates APK installation and ExoPlayer playback through the same HLS normalization approach proven by the Linux prototype.
-
-After launching the probe on the TV, open the displayed `Open on phone` URL from a phone or computer on the same LAN. Paste the long m3u8 URL in that browser page and press `Play`; you do not need to type long URLs with the TV remote.
-
-For later updates, build the APK, serve `android/app/build/outputs/apk/debug/app-debug.apk` from the development machine, then paste the APK URL into the same browser control page. The TV will download it and open the system installer.
-
-Build when JDK 17 and Android SDK 36 are available:
-
-```bash
-cd android
-./gradlew :app:assembleDebug
-```
-
-See `docs/android-honor-probe.md` for sideload and TV verification steps.

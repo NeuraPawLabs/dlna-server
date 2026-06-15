@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Paw pad -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,63 C36,63 30,54 30,48 C30,42 36,36 54,36 C72,36 78,42 78,48 C78,54 72,63 54,63 Z" />
+
+    <!-- Left toe bean -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M35,30 A6,6 0 1,1 35.01,30 Z" />
+
+    <!-- Center toe bean -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,25 A6.5,6.5 0 1,1 54.01,25 Z" />
+
+    <!-- Right toe bean -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M73,30 A6,6 0 1,1 73.01,30 Z" />
+
+    <!-- Play triangle cutout (uses background color to create negative space) -->
+    <path
+        android:fillColor="#1A237E"
+        android:pathData="M49,42 L49,56 L61,49 Z" />
+
+</vector>

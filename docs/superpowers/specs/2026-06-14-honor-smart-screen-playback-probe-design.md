@@ -8,7 +8,7 @@ Build a minimal Android APK probe for Honor Smart Screen that verifies installat
 
 The probe is not a full DLNA receiver. It does not implement SSDP, SOAP, or UPnP DMR services in this phase. It validates the highest-risk Android TV migration assumptions before porting the Linux DMR control layer.
 
-The app is added as an independent Android project under `android/` so the Linux prototype remains usable and testable.
+The app is added as an independent Android project at the repository root so the Linux prototype remains usable and testable.
 
 ## Target Environment
 
@@ -20,7 +20,7 @@ The first build targets modern Android APIs while keeping the app simple enough 
 
 On launch, the app shows one full-screen probe page suitable for a TV remote:
 
-- app title: `NewraPaw DLNA Probe`
+- app title: `PawCast`
 - local IP address
 - local proxy base URL
 - playback status

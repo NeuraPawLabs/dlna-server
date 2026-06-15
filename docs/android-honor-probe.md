@@ -19,20 +19,19 @@ ls "$ANDROID_HOME/platforms/android-36"
 ## Build
 
 ```bash
-cd android
 ./gradlew :app:assembleDebug
 ```
 
 The debug APK is written to:
 
 ```text
-android/app/build/outputs/apk/debug/app-debug.apk
+app/build/outputs/apk/debug/app-debug.apk
 ```
 
 ## Device Verification
 
 1. Install the APK on Honor Smart Screen by U disk or the system-supported sideload flow.
-2. Launch `NewraPaw DLNA Probe`.
+2. Launch `PawCast`.
 3. On the TV screen, find the `Open on phone` URL, such as `http://192.168.1.23:43000`.
 4. Open that URL from a phone or computer on the same Wi-Fi/LAN.
 5. Paste a fresh m3u8 URL into the browser page and press `Play`.
@@ -49,7 +48,6 @@ After the first APK is installed, later debug builds can be installed through th
 Build the latest APK:
 
 ```bash
-cd android
 ./gradlew :app:assembleDebug
 ```
 
@@ -60,7 +58,7 @@ cd app/build/outputs/apk/debug
 python3 -m http.server 8080
 ```
 
-On the TV, launch `NewraPaw DLNA Probe`. From a phone or computer on the same LAN, open the `Open on phone` URL shown on the TV. Paste this APK URL into the `Paste APK URL` field:
+On the TV, launch `PawCast`. From a phone or computer on the same LAN, open the `Open on phone` URL shown on the TV. Paste this APK URL into the `Paste APK URL` field:
 
 ```text
 http://<dev-machine-ip>:8080/app-debug.apk

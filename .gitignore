@@ -1,11 +1,7 @@
-node_modules/
-dist/
-coverage/
-*.sock
 .env
 .worktrees/
-android/.gradle/
-android/build/
-android/app/build/
-android/local.properties
+.gradle/
+build/
+app/build/
+local.properties
 *.apk

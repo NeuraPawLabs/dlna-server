@@ -13,9 +13,9 @@
 ### Task 1: Proxy Settings Mode
 
 **Files:**
-- Modify: `android/app/src/main/java/labs/newrapaw/dlna/probe/ProxyConfig.kt`
-- Test: `android/app/src/test/java/labs/newrapaw/dlna/probe/ProxyConfigTest.kt`
-- Test: `android/app/src/test/java/labs/newrapaw/dlna/probe/ControlPageTest.kt`
+- Modify: `app/src/main/java/labs/newrapaw/dlna/probe/ProxyConfig.kt`
+- Test: `app/src/test/java/labs/newrapaw/dlna/probe/ProxyConfigTest.kt`
+- Test: `app/src/test/java/labs/newrapaw/dlna/probe/ControlPageTest.kt`
 
 - [ ] Add failing tests for `UpstreamMode.PROXY_ONLY` and `UpstreamMode.RACE_DIRECT_AND_PROXY`.
 - [ ] Persist `upstreamMode` in shared preferences JSON with `PROXY_ONLY` default.
@@ -24,8 +24,8 @@
 ### Task 2: Race Fetching
 
 **Files:**
-- Modify: `android/app/src/main/java/labs/newrapaw/dlna/probe/LocalHlsProxy.kt`
-- Test: `android/app/src/test/java/labs/newrapaw/dlna/probe/LocalHlsProxyStabilityTest.kt`
+- Modify: `app/src/main/java/labs/newrapaw/dlna/probe/LocalHlsProxy.kt`
+- Test: `app/src/test/java/labs/newrapaw/dlna/probe/LocalHlsProxyStabilityTest.kt`
 
 - [ ] Add a failing test where direct upstream is slow and configured HTTP proxy responds fast.
 - [ ] Implement direct/proxy racing for manifest and segment upstream fetches.

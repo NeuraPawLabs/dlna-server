@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build an Android probe APK under `android/` that verifies Honor Smart Screen installation and ExoPlayer playback through a local HLS proxy that strips PNG wrappers from HLS segments.
+**Goal:** Build an Android probe APK at the repository root that verifies Honor Smart Screen installation and ExoPlayer playback through a local HLS proxy that strips PNG wrappers from HLS segments.
 
-**Architecture:** The existing Linux prototype remains at the repository root. The Android probe is an independent Kotlin Android app in `android/` with a simple TV-friendly Activity, AndroidX Media3 ExoPlayer, and a lightweight localhost HLS proxy. Pure Kotlin unit tests cover URL encoding, manifest rewrite, and segment wrapper stripping; device testing verifies sideload and playback.
+**Architecture:** The existing Linux prototype remains at the repository root. The Android probe is an independent Kotlin Android app at the repository root with a simple TV-friendly Activity, AndroidX Media3 ExoPlayer, and a lightweight localhost HLS proxy. Pure Kotlin unit tests cover URL encoding, manifest rewrite, and segment wrapper stripping; device testing verifies sideload and playback.
 
 **Tech Stack:** Kotlin, Android Gradle Plugin, AndroidX Media3 ExoPlayer, JUnit, OkHttp, built-in `HttpServer`-style socket handling through a small embedded Kotlin server.
 
@@ -12,18 +12,18 @@
 
 ## File Structure
 
-- `android/settings.gradle.kts`: Android project settings.
-- `android/build.gradle.kts`: root Android Gradle plugin configuration.
-- `android/gradle.properties`: AndroidX and Kotlin settings.
-- `android/app/build.gradle.kts`: app module dependencies and SDK versions.
-- `android/app/src/main/AndroidManifest.xml`: permissions, Activity declaration, and network security config reference.
-- `android/app/src/main/res/xml/network_security_config.xml`: cleartext allowlist for localhost only.
-- `android/app/src/main/res/values/strings.xml`: app name and UI labels.
-- `android/app/src/main/java/labs/newrapaw/dlna/probe/MainActivity.kt`: probe UI, ExoPlayer lifecycle, logs, and playback actions.
-- `android/app/src/main/java/labs/newrapaw/dlna/probe/LocalHlsProxy.kt`: localhost manifest and segment proxy.
-- `android/app/src/main/java/labs/newrapaw/dlna/probe/HlsProxyTransforms.kt`: pure URL encoding, manifest rewriting, and PNG wrapper stripping.
-- `android/app/src/main/java/labs/newrapaw/dlna/probe/ProbeConfig.kt`: test URL configuration and defaults.
-- `android/app/src/test/java/labs/newrapaw/dlna/probe/HlsProxyTransformsTest.kt`: JVM unit tests for pure proxy transforms.
+- `settings.gradle.kts`: Android project settings.
+- `build.gradle.kts`: root Android Gradle plugin configuration.
+- `gradle.properties`: AndroidX and Kotlin settings.
+- `app/build.gradle.kts`: app module dependencies and SDK versions.
+- `app/src/main/AndroidManifest.xml`: permissions, Activity declaration, and network security config reference.
+- `app/src/main/res/xml/network_security_config.xml`: cleartext allowlist for localhost only.
+- `app/src/main/res/values/strings.xml`: app name and UI labels.
+- `app/src/main/java/labs/newrapaw/dlna/probe/MainActivity.kt`: probe UI, ExoPlayer lifecycle, logs, and playback actions.
+- `app/src/main/java/labs/newrapaw/dlna/probe/LocalHlsProxy.kt`: localhost manifest and segment proxy.
+- `app/src/main/java/labs/newrapaw/dlna/probe/HlsProxyTransforms.kt`: pure URL encoding, manifest rewriting, and PNG wrapper stripping.
+- `app/src/main/java/labs/newrapaw/dlna/probe/ProbeConfig.kt`: test URL configuration and defaults.
+- `app/src/test/java/labs/newrapaw/dlna/probe/HlsProxyTransformsTest.kt`: JVM unit tests for pure proxy transforms.
 - `docs/android-honor-probe.md`: build, sideload, and device verification instructions.
 
 ### Task 1: Android Toolchain Check And Ignore Rules
@@ -37,10 +37,10 @@
 Append these lines to `.gitignore`:
 
 ```gitignore
-android/.gradle/
-android/build/
-android/app/build/
-android/local.properties
+.gradle/
+build/
+app/build/
+local.properties
 *.apk
 ```
 
@@ -70,20 +70,19 @@ ls "$ANDROID_HOME/platforms/android-35"
 ## Build
 
 ```bash
-cd android
 ./gradlew :app:assembleDebug
 ```
 
 The debug APK is written to:
 
 ```text
-android/app/build/outputs/apk/debug/app-debug.apk
+app/build/outputs/apk/debug/app-debug.apk
 ```
 
 ## Device Verification
 
 1. Install the APK on Honor Smart Screen by U disk or the system-supported sideload flow.
-2. Launch `NewraPaw DLNA Probe`.
+2. Launch `PawCast`.
 3. Enter a fresh m3u8 URL if the built-in field is empty.
 4. Press `Play Test Stream`.
 5. Confirm the status changes from `Idle` to `Buffering` and then `Ready`.
@@ -116,17 +115,17 @@ git commit -m "docs: add honor smart screen probe instructions"
 ### Task 2: Android Gradle Project Scaffold
 
 **Files:**
-- Create: `android/settings.gradle.kts`
-- Create: `android/build.gradle.kts`
-- Create: `android/gradle.properties`
-- Create: `android/app/build.gradle.kts`
-- Create: `android/app/src/main/AndroidManifest.xml`
-- Create: `android/app/src/main/res/xml/network_security_config.xml`
-- Create: `android/app/src/main/res/values/strings.xml`
+- Create: `settings.gradle.kts`
+- Create: `build.gradle.kts`
+- Create: `gradle.properties`
+- Create: `app/build.gradle.kts`
+- Create: `app/src/main/AndroidManifest.xml`
+- Create: `app/src/main/res/xml/network_security_config.xml`
+- Create: `app/src/main/res/values/strings.xml`
 
 - [ ] **Step 1: Write Android project settings**
 
-Create `android/settings.gradle.kts`:
+Create `settings.gradle.kts`:
 
 ```kotlin
 pluginManagement {
@@ -145,13 +144,13 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "NewraPawDlnaProbe"
+rootProject.name = "PawCast"
 include(":app")
 ```
 
 - [ ] **Step 2: Write root Gradle config**
 
-Create `android/build.gradle.kts`:
+Create `build.gradle.kts`:
 
 ```kotlin
 plugins {
@@ -162,7 +161,7 @@ plugins {
 
 - [ ] **Step 3: Write Gradle properties**
 
-Create `android/gradle.properties`:
+Create `gradle.properties`:
 
 ```properties
 org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
@@ -172,7 +171,7 @@ kotlin.code.style=official
 
 - [ ] **Step 4: Write app module config**
 
-Create `android/app/build.gradle.kts`:
+Create `app/build.gradle.kts`:
 
 ```kotlin
 plugins {
@@ -208,7 +207,7 @@ dependencies {
 
 - [ ] **Step 5: Write manifest and resources**
 
-Create `android/app/src/main/AndroidManifest.xml`:
+Create `app/src/main/AndroidManifest.xml`:
 
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
@@ -235,7 +234,7 @@ Create `android/app/src/main/AndroidManifest.xml`:
 </manifest>
 ```
 
-Create `android/app/src/main/res/xml/network_security_config.xml`:
+Create `app/src/main/res/xml/network_security_config.xml`:
 
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
@@ -247,16 +246,16 @@ Create `android/app/src/main/res/xml/network_security_config.xml`:
 </network-security-config>
 ```
 
-Create `android/app/src/main/res/values/strings.xml`:
+Create `app/src/main/res/values/strings.xml`:
 
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">NewraPaw DLNA Probe</string>
+    <string name="app_name">PawCast</string>
 </resources>
 ```
 
-Create `android/app/src/main/res/values/styles.xml`:
+Create `app/src/main/res/values/styles.xml`:
 
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
@@ -274,30 +273,29 @@ Create `android/app/src/main/res/values/styles.xml`:
 Run:
 
 ```bash
-cd android
 ./gradlew :app:tasks
 ```
 
-Expected: Gradle lists app tasks. If no wrapper exists yet, run system `gradle wrapper --gradle-version 8.10.2` from `android/` first when `gradle` is available.
+Expected: Gradle lists app tasks. If no wrapper exists yet, run system `gradle wrapper --gradle-version 8.10.2` from the repository root first when `gradle` is available.
 
 - [ ] **Step 7: Commit**
 
 Run:
 
 ```bash
-git add android
+git add settings.gradle.kts build.gradle.kts gradle.properties gradle gradlew gradlew.bat app
 git commit -m "chore: scaffold android playback probe"
 ```
 
 ### Task 3: HLS Proxy Pure Transforms
 
 **Files:**
-- Create: `android/app/src/main/java/labs/newrapaw/dlna/probe/HlsProxyTransforms.kt`
-- Create: `android/app/src/test/java/labs/newrapaw/dlna/probe/HlsProxyTransformsTest.kt`
+- Create: `app/src/main/java/labs/newrapaw/dlna/probe/HlsProxyTransforms.kt`
+- Create: `app/src/test/java/labs/newrapaw/dlna/probe/HlsProxyTransformsTest.kt`
 
 - [ ] **Step 1: Write failing transform tests**
 
-Create `android/app/src/test/java/labs/newrapaw/dlna/probe/HlsProxyTransformsTest.kt`:
+Create `app/src/test/java/labs/newrapaw/dlna/probe/HlsProxyTransformsTest.kt`:
 
 ```kotlin
 package labs.newrapaw.dlna.probe
@@ -372,7 +370,6 @@ class HlsProxyTransformsTest {
 Run:
 
 ```bash
-cd android
 ./gradlew :app:testDebugUnitTest --tests labs.newrapaw.dlna.probe.HlsProxyTransformsTest
 ```
 
@@ -380,7 +377,7 @@ Expected: tests fail because transform functions do not exist.
 
 - [ ] **Step 3: Implement pure transforms**
 
-Create `android/app/src/main/java/labs/newrapaw/dlna/probe/HlsProxyTransforms.kt`:
+Create `app/src/main/java/labs/newrapaw/dlna/probe/HlsProxyTransforms.kt`:
 
 ```kotlin
 package labs.newrapaw.dlna.probe
@@ -439,7 +436,6 @@ private fun findMpegTsOffset(segment: ByteArray): Int {
 Run:
 
 ```bash
-cd android
 ./gradlew :app:testDebugUnitTest --tests labs.newrapaw.dlna.probe.HlsProxyTransformsTest
 ```
 
@@ -450,18 +446,18 @@ Expected: tests pass.
 Run:
 
 ```bash
-git add android/app/src/main/java/labs/newrapaw/dlna/probe/HlsProxyTransforms.kt android/app/src/test/java/labs/newrapaw/dlna/probe/HlsProxyTransformsTest.kt
+git add app/src/main/java/labs/newrapaw/dlna/probe/HlsProxyTransforms.kt app/src/test/java/labs/newrapaw/dlna/probe/HlsProxyTransformsTest.kt
 git commit -m "feat: add android hls proxy transforms"
 ```
 
 ### Task 4: Local HLS Proxy Runtime
 
 **Files:**
-- Create: `android/app/src/main/java/labs/newrapaw/dlna/probe/LocalHlsProxy.kt`
+- Create: `app/src/main/java/labs/newrapaw/dlna/probe/LocalHlsProxy.kt`
 
 - [ ] **Step 1: Implement local proxy server**
 
-Create `android/app/src/main/java/labs/newrapaw/dlna/probe/LocalHlsProxy.kt`:
+Create `app/src/main/java/labs/newrapaw/dlna/probe/LocalHlsProxy.kt`:
 
 ```kotlin
 package labs.newrapaw.dlna.probe
@@ -596,7 +592,6 @@ class LocalHlsProxy(
 Run:
 
 ```bash
-cd android
 ./gradlew :app:compileDebugKotlin
 ```
 
@@ -607,19 +602,19 @@ Expected: Kotlin compilation succeeds.
 Run:
 
 ```bash
-git add android/app/src/main/java/labs/newrapaw/dlna/probe/LocalHlsProxy.kt
+git add app/src/main/java/labs/newrapaw/dlna/probe/LocalHlsProxy.kt
 git commit -m "feat: add android local hls proxy"
 ```
 
 ### Task 5: Probe Activity And ExoPlayer Playback
 
 **Files:**
-- Create: `android/app/src/main/java/labs/newrapaw/dlna/probe/ProbeConfig.kt`
-- Create: `android/app/src/main/java/labs/newrapaw/dlna/probe/MainActivity.kt`
+- Create: `app/src/main/java/labs/newrapaw/dlna/probe/ProbeConfig.kt`
+- Create: `app/src/main/java/labs/newrapaw/dlna/probe/MainActivity.kt`
 
 - [ ] **Step 1: Write probe config**
 
-Create `android/app/src/main/java/labs/newrapaw/dlna/probe/ProbeConfig.kt`:
+Create `app/src/main/java/labs/newrapaw/dlna/probe/ProbeConfig.kt`:
 
 ```kotlin
 package labs.newrapaw.dlna.probe
@@ -631,7 +626,7 @@ object ProbeConfig {
 
 - [ ] **Step 2: Write Activity UI and playback lifecycle**
 
-Create `android/app/src/main/java/labs/newrapaw/dlna/probe/MainActivity.kt`:
+Create `app/src/main/java/labs/newrapaw/dlna/probe/MainActivity.kt`:
 
 ```kotlin
 package labs.newrapaw.dlna.probe
@@ -690,7 +685,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         root.addView(TextView(this).apply {
-            text = "NewraPaw DLNA Probe"
+            text = "PawCast"
             textSize = 28f
             gravity = Gravity.CENTER_HORIZONTAL
         })
@@ -807,7 +802,6 @@ class MainActivity : AppCompatActivity() {
 Run:
 
 ```bash
-cd android
 ./gradlew :app:compileDebugKotlin
 ```
 
@@ -818,7 +812,7 @@ Expected: Kotlin compilation succeeds.
 Run:
 
 ```bash
-git add android/app/src/main/java/labs/newrapaw/dlna/probe/ProbeConfig.kt android/app/src/main/java/labs/newrapaw/dlna/probe/MainActivity.kt
+git add app/src/main/java/labs/newrapaw/dlna/probe/ProbeConfig.kt app/src/main/java/labs/newrapaw/dlna/probe/MainActivity.kt
 git commit -m "feat: add android playback probe activity"
 ```
 
@@ -835,12 +829,11 @@ Append to `README.md`:
 ```markdown
 ## Android Honor Smart Screen Probe
 
-The Android probe lives in `android/`. It validates APK installation and ExoPlayer playback through the same HLS normalization approach proven by the Linux prototype.
+The Android probe lives at the repository root. It validates APK installation and ExoPlayer playback through the same HLS normalization approach proven by the Linux prototype.
 
 Build when JDK 17 and Android SDK 35 are available:
 
 ```bash
-cd android
 ./gradlew :app:assembleDebug
 ```
 
@@ -852,7 +845,6 @@ See `docs/android-honor-probe.md` for sideload and TV verification steps.
 Run:
 
 ```bash
-cd android
 ./gradlew :app:testDebugUnitTest
 ```
 
@@ -863,11 +855,10 @@ Expected: unit tests pass.
 Run:
 
 ```bash
-cd android
 ./gradlew :app:assembleDebug
 ```
 
-Expected: `android/app/build/outputs/apk/debug/app-debug.apk` exists.
+Expected: `app/build/outputs/apk/debug/app-debug.apk` exists.
 
 - [ ] **Step 4: Commit**
 
