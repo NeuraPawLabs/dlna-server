@@ -21,6 +21,7 @@ In scope:
 - build a persistent VOD prefetch session per active manifest
 - parse the full segment list for VOD manifests
 - schedule sustained background segment downloads to the end of the asset
+- allow prefetch concurrency to be configured from the management page
 - keep cache behavior aware of playback position
 - prefer player-critical requests over background prefetch work
 - expose enough logs and state for manual verification
@@ -75,6 +76,10 @@ Existing responsibilities stay unchanged:
 - fetch and normalize segments
 - serve the local control page
 
+Additional configuration responsibility:
+
+- apply management-page updates to the active prefetch concurrency setting
+
 ### `VodPrefetchSession`
 
 `VodPrefetchSession` is a new stateful component owned by `LocalHlsProxy`.
@@ -114,6 +119,16 @@ New requirements:
 - preserve segment metadata required for ordered eviction
 - support eviction decisions based on segment index relative to current playback position instead of plain file recency alone
 
+### Prefetch Settings Storage
+
+Prefetch settings should be stored with the existing local management settings rather than introduced as a separate storage system.
+
+Responsibilities:
+
+- persist the configured prefetch concurrency value
+- provide a default value when no value has been saved yet
+- expose the current value to both the management page and `VodPrefetchSession`
+
 ## Manifest Eligibility
 
 This implementation should only activate sustained prefetch for manifests that look like VOD.
@@ -139,7 +154,8 @@ If these conditions are not met, fall back to the current lightweight prefetch p
    - if cached, return it immediately
    - if already in flight, wait for that result
    - if not started, issue an immediate player-priority fetch and advance playback position tracking
-10. When the user switches to another VOD URL, the old session is canceled and a new one is created.
+10. When the user changes prefetch concurrency from the management page, the new value is clamped and applied to the active session immediately.
+11. When the user switches to another VOD URL, the old session is canceled and a new one is created.
 
 ## Download Scheduling
 
@@ -152,20 +168,29 @@ Scheduling rules:
 - background concurrency is limited
 - player-needed segments have higher priority than background prefetch segments
 
-Recommended defaults:
+Recommended settings:
 
 - background prefetch concurrency: `3`
+- allowed configured concurrency range: `1..6`
 - retries per failed segment: `2`
 
 Behavior:
 
-- the session maintains at most `3` background in-flight downloads
+- the session maintains at most the configured number of background in-flight downloads
 - it schedules the next available segment indexes in ascending order
 - if segment `5` finishes before segment `4`, both are still valid cache fills
 - if playback requests segment `8` before background prefetch reaches it, the request is promoted and fetched immediately
 - if playback requests a segment already being prefetched, no duplicate download is issued
+- if the management page sets a new concurrency value, the running session adjusts its in-flight ceiling without requiring playback restart
 
 This keeps the pipeline full on slow links without overloading the source or starving the player.
+
+Configuration handling:
+
+- the management page exposes a numeric prefetch concurrency control
+- the backend clamps submitted values into `1..6`
+- the stored default remains `3`
+- invalid or missing values fall back to `3`
 
 ## Cache Policy
 
@@ -219,9 +244,11 @@ Add targeted logs so device testing can show whether the prefetcher is actually 
 Suggested log events:
 
 - session created with manifest URL and segment count
+- session created with configured prefetch concurrency
 - background prefetch started
 - prefetched segment index and URL
 - player-priority fetch triggered for a not-yet-prefetched segment
+- prefetch concurrency updated from the management page
 - cache eviction with segment index and reason
 - prefetch retry and final skip
 - session canceled and replaced
@@ -235,6 +262,7 @@ Optional future control-page stats:
 - current play index
 - next prefetch index
 - active background downloads
+- configured prefetch concurrency
 
 These metrics are useful but not required for the first implementation.
 
@@ -247,6 +275,7 @@ Add focused tests for:
 - VOD manifest detection
 - ordered session creation from a manifest
 - bounded concurrency scheduling
+- concurrency reconfiguration while a session is active
 - player-priority request promotion
 - retry and skip behavior
 - playback-aware eviction ordering
@@ -258,6 +287,7 @@ Use a fake slow upstream source and verify:
 - background prefetch continues beyond the first few segments
 - prefetched segments are served from cache without duplicate upstream fetches
 - player requests can wait on or preempt in-flight background work correctly
+- management-page concurrency changes alter the number of active background downloads without restarting playback
 - session cancellation stops further prefetch for the old manifest
 
 ### Manual Verification
@@ -265,7 +295,9 @@ Use a fake slow upstream source and verify:
 On device:
 
 - play a slow VOD HLS source
+- change prefetch concurrency from the management page during playback
 - confirm cache stats continue growing beyond the first few segments
+- confirm the session reacts to the new concurrency value without restarting playback
 - confirm logs show sustained prefetch activity toward the end of the asset
 - observe lower stall frequency compared with the current lightweight prefetch behavior
 
