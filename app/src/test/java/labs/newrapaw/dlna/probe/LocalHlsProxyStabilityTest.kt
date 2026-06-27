@@ -330,8 +330,10 @@ class LocalHlsProxyStabilityTest {
                     enableBody,
             )
 
-            assertTrue(enableResponse.startsWith("HTTP/1.1 200"))
+            assertTrue(enableResponse, enableResponse.startsWith("HTTP/1.1 200"))
             assertTrue(store.load().detailedDiagnosticsEnabled)
+            assertTrue(enableResponse.contains("Content-Type: application/json"))
+            assertTrue(enableResponse.contains("\"ok\":true"))
 
             val disableResponse = rawHttpRequest(
                 proxy.port,
@@ -397,6 +399,36 @@ class LocalHlsProxyStabilityTest {
         } finally {
             proxy.close()
             upstream.close()
+        }
+    }
+
+    @Test
+    fun playRouteReturnsJsonForInlineManagementUi() {
+        val requestedUrls = CopyOnWriteArrayList<String>()
+        val proxy = LocalHlsProxy(
+            log = {},
+            onPlayRequested = requestedUrls::add,
+        )
+
+        proxy.start()
+        try {
+            val url = "https://example.com/live.m3u8"
+            val body = "url=${URLEncoder.encode(url, "UTF-8")}"
+            val response = rawHttpRequest(
+                proxy.port,
+                "POST /control/play HTTP/1.1\r\n" +
+                    "Host: 127.0.0.1\r\n" +
+                    "Content-Length: ${body.length}\r\n\r\n" +
+                    body,
+            )
+
+            assertTrue(response, response.startsWith("HTTP/1.1 200"))
+            assertTrue(response.contains("Content-Type: application/json"))
+            assertTrue(response.contains("\"ok\":true"))
+            assertTrue(response.contains("\"message\":\"Play request sent. You can return to the TV.\""))
+            assertEquals(listOf(url), requestedUrls.toList())
+        } finally {
+            proxy.close()
         }
     }
 

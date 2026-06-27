@@ -135,6 +135,24 @@ class ControlPageTest {
     }
 
     @Test
+    fun buildControlPageContainsInlineActionFeedbackAndAsyncSubmitScript() {
+        val html = buildControlPage(
+            deviceName = "Honor Screen",
+            status = "Ready",
+            localPlaybackUrl = "http://127.0.0.1:43000",
+            proxySettings = ProxySettingsState(),
+            cacheStats = HlsSegmentCacheStats(entries = 0, sizeBytes = 0, hits = 0, misses = 0, inFlight = 0),
+            logs = emptyList(),
+        )
+
+        assertTrue(html.contains("id=\"action-feedback\""))
+        assertTrue(html.contains("data-control-form"))
+        assertTrue(html.contains("querySelectorAll('form[data-control-form]')"))
+        assertTrue(html.contains("fetch(form.action"))
+        assertTrue(html.contains("showActionFeedback"))
+    }
+
+    @Test
     fun decodeFormUrlExtractsLongSignedUrl() {
         val original = "https://origin.example/object?filename=video.m3u8&X-Amz-Signature=abc+123"
         val body = "url=${URLEncoder.encode(original, "UTF-8")}"

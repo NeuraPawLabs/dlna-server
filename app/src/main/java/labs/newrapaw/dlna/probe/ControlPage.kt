@@ -29,6 +29,8 @@ fun buildControlPage(
           input[type="text"] { width: 100%; box-sizing: border-box; font-size: 16px; padding: 10px; }
           button { font-size: 16px; padding: 9px 14px; margin-top: 10px; }
           .status { margin: 0 0 18px; padding: 10px; background: #eef2ff; }
+          .feedback { display: none; margin: 0 0 18px; padding: 10px 12px; border: 1px solid #bfdbfe; background: #eff6ff; color: #1e3a8a; }
+          .feedback.error { border-color: #fecaca; background: #fef2f2; color: #991b1b; }
           .proxy-row { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid #eee; }
           .proxy-row code { flex: 1; word-break: break-all; }
           #logs { min-height: 220px; padding: 10px; overflow: auto; background: #111; color: #eee; white-space: pre-wrap; }
@@ -51,25 +53,26 @@ fun buildControlPage(
           </nav>
           <main>
             <div class="status">Status: $status<br>Local playback proxy: $localPlaybackUrl<br>Current network: ${escapeHtml(proxyStatus(proxySettings))}</div>
+            <div id="action-feedback" class="feedback" role="status" aria-live="polite"></div>
             <section id="play">
               <h2>播放</h2>
-              <form method="post" action="/control/play">
+              <form method="post" action="/control/play" data-control-form>
                 <label for="url">Paste m3u8 URL</label>
                 <textarea id="url" name="url" autofocus></textarea>
                 <button type="submit">Play</button>
               </form>
-              <form method="post" action="/control/stop">
+              <form method="post" action="/control/stop" data-control-form>
                 <button type="submit">Stop</button>
               </form>
             </section>
             <section id="proxy">
               <h2>代理</h2>
-              <form method="post" action="/control/proxy/add">
+              <form method="post" action="/control/proxy/add" data-control-form>
                 <label for="proxyUrl">Proxy URL</label>
                 <input id="proxyUrl" name="proxyUrl" type="text" placeholder="http://127.0.0.1:7890 或 socks5h://proxy.example:1080">
                 <button type="submit">Add and Use</button>
               </form>
-              <form method="post" action="/control/proxy/select">
+              <form method="post" action="/control/proxy/select" data-control-form>
                 ${proxyOptionsHtml(proxySettings)}
                 ${upstreamModeHtml(proxySettings)}
                 <button type="submit">Use Selected Proxy</button>
@@ -82,7 +85,7 @@ fun buildControlPage(
               <p>Hits: ${cacheStats.hits}</p>
               <p>Misses: ${cacheStats.misses}</p>
               <p>In flight: ${cacheStats.inFlight}</p>
-              <form method="post" action="/control/prefetch/config">
+              <form method="post" action="/control/prefetch/config" data-control-form>
                 <label for="prefetchConcurrency">Prefetch concurrency</label>
                 <input
                   id="prefetchConcurrency"
@@ -93,7 +96,7 @@ fun buildControlPage(
                   value="${proxySettings.prefetchConcurrency}">
                 <button type="submit">Apply Prefetch Setting</button>
               </form>
-              <form method="post" action="/control/logging/config">
+              <form method="post" action="/control/logging/config" data-control-form>
                 <label>
                   <input
                     type="checkbox"
@@ -103,7 +106,7 @@ fun buildControlPage(
                 </label>
                 <button type="submit">Apply Logging Setting</button>
               </form>
-              <form method="post" action="/control/cache/clear">
+              <form method="post" action="/control/cache/clear" data-control-form>
                 <button type="submit">Clear Cache</button>
               </form>
             </section>
@@ -113,7 +116,7 @@ fun buildControlPage(
             </section>
             <section id="update">
               <h2>更新</h2>
-              <form method="post" action="/control/update">
+              <form method="post" action="/control/update" data-control-form>
                 <label for="apkUrl">Paste APK URL</label>
                 <textarea id="apkUrl" name="apkUrl"></textarea>
                 <button type="submit">Install Update</button>
@@ -122,6 +125,46 @@ fun buildControlPage(
           </main>
         </div>
         <script>
+          function showActionFeedback(message, isError) {
+            const feedback = document.getElementById('action-feedback');
+            feedback.textContent = message;
+            feedback.classList.toggle('error', !!isError);
+            feedback.style.display = 'block';
+            window.clearTimeout(window.__actionFeedbackTimer);
+            window.__actionFeedbackTimer = window.setTimeout(() => {
+              feedback.style.display = 'none';
+              feedback.textContent = '';
+              feedback.classList.remove('error');
+            }, 3000);
+          }
+
+          async function submitControlForm(form, submitter) {
+            const formData = new FormData(form, submitter);
+            const response = await fetch(form.action, {
+              method: form.method || 'POST',
+              body: new URLSearchParams(formData),
+              headers: { 'Accept': 'application/json' },
+            });
+            const payload = await response.json().catch(() => ({ ok: false, message: 'Unexpected response' }));
+            if (!response.ok || !payload.ok) {
+              showActionFeedback(payload.message || 'Request failed', true);
+              return;
+            }
+            showActionFeedback(payload.message || 'Operation completed', false);
+          }
+
+          document.querySelectorAll('form[data-control-form]').forEach((form) => {
+            form.addEventListener('submit', async (event) => {
+              event.preventDefault();
+              const submitter = event.submitter || form.querySelector('button[type="submit"], input[type="submit"]');
+              try {
+                await submitControlForm(form, submitter);
+              } catch (error) {
+                showActionFeedback(error.message || 'Request failed', true);
+              }
+            });
+          });
+
           async function refreshLogs() {
             const response = await fetch('/logs', { cache: 'no-store' });
             document.getElementById('log-content').textContent = await response.text();

@@ -182,51 +182,51 @@ class LocalHlsProxy(
     private fun handlePlayRequest(body: String, output: OutputStream) {
         val url = decodeFormUrl(body)
         if (url == null) {
-            writeText(output, 400, "text/html", "Missing URL")
+            writeJson(output, 400, false, "Missing URL")
             return
         }
 
         safeLog("Remote play request: $url")
         onPlayRequested(url)
-        writeText(output, 200, "text/html", "Play request sent. You can return to the TV.")
+        writeJson(output, 200, true, "Play request sent. You can return to the TV.")
     }
 
     private fun handleStopRequest(output: OutputStream) {
         safeLog("Remote stop request")
         onStopRequested()
-        writeText(output, 200, "text/html", "Stop request sent. You can return to the TV.")
+        writeJson(output, 200, true, "Stop request sent. You can return to the TV.")
     }
 
     private fun handleUpdateRequest(body: String, output: OutputStream) {
         val apkUrl = decodeFormValue(body, "apkUrl")
         if (apkUrl == null) {
-            writeText(output, 400, "text/html", "Missing APK URL")
+            writeJson(output, 400, false, "Missing APK URL")
             return
         }
 
         safeLog("Remote update request: $apkUrl")
         onUpdateRequested(apkUrl)
-        writeText(output, 200, "text/html", "Update request sent. Confirm installation on the TV.")
+        writeJson(output, 200, true, "Update request sent. Confirm installation on the TV.")
     }
 
     private fun handleProxyAddRequest(body: String, output: OutputStream) {
         val proxyUrl = decodeFormValue(body, "proxyUrl")
         val config = proxyUrl?.let(::parseProxyConfig)
         if (config == null) {
-            writeText(output, 400, "text/html", "Invalid proxy URL. Use http://host:port, socks5://host:port, or socks5h://host:port.")
+            writeJson(output, 400, false, "Invalid proxy URL. Use http://host:port, socks5://host:port, or socks5h://host:port.")
             return
         }
 
         val next = proxySettingsStore.load().add(config).select(config.id)
         proxySettingsStore.save(next)
         safeLog("Proxy selected: ${config.displayUrl()}")
-        writeText(output, 200, "text/html", "Proxy saved: ${config.displayUrl()}")
+        writeJson(output, 200, true, "Proxy saved: ${config.displayUrl()}")
     }
 
     private fun handleProxySelectRequest(body: String, output: OutputStream) {
         val proxyId = decodeFormValue(body, "proxyId")
         if (proxyId == null) {
-            writeText(output, 400, "text/html", "Missing proxyId")
+            writeJson(output, 400, false, "Missing proxyId")
             return
         }
 
@@ -234,13 +234,13 @@ class LocalHlsProxy(
         val mode = decodeFormValue(body, "upstreamMode")?.let(::parseUpstreamMode) ?: current.upstreamMode
         val next = current.select(proxyId).withUpstreamMode(mode)
         if (next.selectedProxyId != proxyId) {
-            writeText(output, 400, "text/html", "Unknown proxy")
+            writeJson(output, 400, false, "Unknown proxy")
             return
         }
 
         proxySettingsStore.save(next)
         safeLog("Proxy selected: ${next.selectedProxy()?.displayUrl() ?: "Direct"}")
-        writeText(output, 200, "text/html", "Proxy selected")
+        writeJson(output, 200, true, "Proxy selected")
     }
 
     private fun parseUpstreamMode(value: String): UpstreamMode =
@@ -249,20 +249,20 @@ class LocalHlsProxy(
     private fun handleProxyDeleteRequest(body: String, output: OutputStream) {
         val proxyId = decodeFormValue(body, "proxyId")
         if (proxyId == null || proxyId == ProxySettingsState.DIRECT_PROXY_ID) {
-            writeText(output, 400, "text/html", "Missing proxyId")
+            writeJson(output, 400, false, "Missing proxyId")
             return
         }
 
         val next = proxySettingsStore.load().remove(proxyId)
         proxySettingsStore.save(next)
         safeLog("Proxy deleted: $proxyId")
-        writeText(output, 200, "text/html", "Proxy deleted")
+        writeJson(output, 200, true, "Proxy deleted")
     }
 
     private fun handleCacheClearRequest(output: OutputStream) {
         segmentCache?.clear()
         safeLog("HLS cache cleared")
-        writeText(output, 200, "text/html", "Cache cleared")
+        writeJson(output, 200, true, "Cache cleared")
     }
 
     private fun handlePrefetchConfigRequest(body: String, output: OutputStream) {
@@ -272,7 +272,7 @@ class LocalHlsProxy(
         proxySettingsStore.save(next)
         activeVodSession?.updateConcurrency(next.prefetchConcurrency)
         safeLog("Prefetch concurrency updated: ${next.prefetchConcurrency}")
-        writeText(output, 200, "text/html", "Prefetch concurrency updated")
+        writeJson(output, 200, true, "Prefetch concurrency updated")
     }
 
     private fun handleLoggingConfigRequest(body: String, output: OutputStream) {
@@ -280,7 +280,7 @@ class LocalHlsProxy(
         val next = proxySettingsStore.load().copy(detailedDiagnosticsEnabled = enabled)
         proxySettingsStore.save(next)
         safeLog("Detailed diagnostics updated: $enabled")
-        writeText(output, 200, "text/html", "Logging setting updated")
+        writeJson(output, 200, true, "Logging setting updated")
     }
 
     private fun handleManifest(path: String, output: OutputStream) {
@@ -530,6 +530,25 @@ class LocalHlsProxy(
     private fun writeText(output: OutputStream, status: Int, contentType: String, body: String) {
         writeBytes(output, status, "$contentType; charset=utf-8", body.toByteArray(Charsets.UTF_8))
     }
+
+    private fun writeJson(output: OutputStream, status: Int, ok: Boolean, message: String) {
+        val body = """{"ok":$ok,"message":"${escapeJson(message)}"}"""
+        writeText(output, status, "application/json", body)
+    }
+
+    private fun escapeJson(value: String): String =
+        buildString(value.length + 8) {
+            value.forEach { char ->
+                when (char) {
+                    '\\' -> append("\\\\")
+                    '"' -> append("\\\"")
+                    '\n' -> append("\\n")
+                    '\r' -> append("\\r")
+                    '\t' -> append("\\t")
+                    else -> append(char)
+                }
+            }
+        }
 
     private fun writeResponse(output: OutputStream, response: DlnaHttpResponse) {
         writeBytes(
