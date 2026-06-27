@@ -40,7 +40,12 @@ data class ProxySettingsState(
     val proxies: List<ProxyConfig> = emptyList(),
     val selectedProxyId: String = DIRECT_PROXY_ID,
     val upstreamMode: UpstreamMode = UpstreamMode.PROXY_ONLY,
+    val prefetchConcurrency: Int = DEFAULT_PREFETCH_CONCURRENCY,
+    val detailedDiagnosticsEnabled: Boolean = false,
 ) {
+    fun normalized(): ProxySettingsState =
+        copy(prefetchConcurrency = prefetchConcurrency.coerceIn(MIN_PREFETCH_CONCURRENCY, MAX_PREFETCH_CONCURRENCY))
+
     fun selectedProxy(): ProxyConfig? =
         proxies.firstOrNull { it.id == selectedProxyId }
 
@@ -72,6 +77,9 @@ data class ProxySettingsState(
 
     companion object {
         const val DIRECT_PROXY_ID = "direct"
+        const val DEFAULT_PREFETCH_CONCURRENCY = 3
+        const val MIN_PREFETCH_CONCURRENCY = 1
+        const val MAX_PREFETCH_CONCURRENCY = 6
     }
 }
 
@@ -118,6 +126,8 @@ class SharedPreferencesProxySettingsStore(
         return JSONObject()
             .put("selectedProxyId", state.selectedProxyId)
             .put("upstreamMode", state.upstreamMode.name)
+            .put("prefetchConcurrency", state.normalized().prefetchConcurrency)
+            .put("detailedDiagnosticsEnabled", state.detailedDiagnosticsEnabled)
             .put("proxies", proxies)
     }
 
@@ -137,11 +147,15 @@ class SharedPreferencesProxySettingsStore(
         val mode = runCatching {
             UpstreamMode.valueOf(json.optString("upstreamMode", UpstreamMode.PROXY_ONLY.name))
         }.getOrDefault(UpstreamMode.PROXY_ONLY)
+        val prefetchConcurrency = json.optInt("prefetchConcurrency", ProxySettingsState.DEFAULT_PREFETCH_CONCURRENCY)
+        val detailedDiagnosticsEnabled = json.optBoolean("detailedDiagnosticsEnabled", false)
         return ProxySettingsState(
             proxies = proxies,
             selectedProxyId = selected,
             upstreamMode = mode,
-        ).select(selected).withUpstreamMode(mode)
+            prefetchConcurrency = prefetchConcurrency,
+            detailedDiagnosticsEnabled = detailedDiagnosticsEnabled,
+        ).select(selected).withUpstreamMode(mode).normalized()
     }
 
     private companion object {

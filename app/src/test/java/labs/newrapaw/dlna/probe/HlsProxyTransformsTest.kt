@@ -49,6 +49,38 @@ class HlsProxyTransformsTest {
     }
 
     @Test
+    fun detectsVodManifestFromEndlistTag() {
+        val manifest = """
+            #EXTM3U
+            #EXTINF:4.0,
+            seg-1.ts
+            #EXT-X-ENDLIST
+        """.trimIndent()
+
+        assertTrue(isVodManifest(manifest))
+    }
+
+    @Test
+    fun extractsOrderedSegmentEntriesFromVodManifest() {
+        val manifest = """
+            #EXTM3U
+            #EXTINF:4.0,
+            seg-1.ts
+            #EXTINF:4.0,
+            seg-2.ts
+            #EXT-X-ENDLIST
+        """.trimIndent()
+
+        assertEquals(
+            listOf(
+                HlsSegmentEntry(index = 0, url = "https://example.com/seg-1.ts"),
+                HlsSegmentEntry(index = 1, url = "https://example.com/seg-2.ts"),
+            ),
+            extractOrderedHlsSegmentEntries(manifest, "https://example.com/master.m3u8"),
+        )
+    }
+
+    @Test
     fun stripPngWrapperReturnsBytesStartingAtTsSync() {
         val wrapper = byteArrayOf(
             0x89.toByte(), 0x50, 0x4e, 0x47,

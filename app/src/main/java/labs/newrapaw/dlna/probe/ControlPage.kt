@@ -82,6 +82,27 @@ fun buildControlPage(
               <p>Hits: ${cacheStats.hits}</p>
               <p>Misses: ${cacheStats.misses}</p>
               <p>In flight: ${cacheStats.inFlight}</p>
+              <form method="post" action="/control/prefetch/config">
+                <label for="prefetchConcurrency">Prefetch concurrency</label>
+                <input
+                  id="prefetchConcurrency"
+                  name="prefetchConcurrency"
+                  type="number"
+                  min="${ProxySettingsState.MIN_PREFETCH_CONCURRENCY}"
+                  max="${ProxySettingsState.MAX_PREFETCH_CONCURRENCY}"
+                  value="${proxySettings.prefetchConcurrency}">
+                <button type="submit">Apply Prefetch Setting</button>
+              </form>
+              <form method="post" action="/control/logging/config">
+                <label>
+                  <input
+                    type="checkbox"
+                    name="detailedDiagnosticsEnabled"
+                    value="true"${if (proxySettings.detailedDiagnosticsEnabled) " checked" else ""}>
+                  Detailed VOD diagnostics
+                </label>
+                <button type="submit">Apply Logging Setting</button>
+              </form>
               <form method="post" action="/control/cache/clear">
                 <button type="submit">Clear Cache</button>
               </form>

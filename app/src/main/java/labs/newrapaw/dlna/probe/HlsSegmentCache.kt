@@ -20,12 +20,15 @@ data class HlsSegmentCacheStats(
 class HlsSegmentCache(
     private val directory: File,
     private val maxBytes: Long,
+    private val diagnosticsLogger: (String) -> Unit = {},
 ) {
     private val lock = Any()
     private val inFlight = ConcurrentHashMap<String, CompletableFuture<ByteArray>>()
     private val hits = AtomicLong(0)
     private val misses = AtomicLong(0)
     private val touchCounter = AtomicLong(0)
+    private val metadataByKey = mutableMapOf<String, CachedSegmentMetadata>()
+    private val playbackPositions = mutableMapOf<String, Int>()
 
     init {
         directory.mkdirs()
@@ -47,7 +50,7 @@ class HlsSegmentCache(
         misses.incrementAndGet()
         return try {
             val bytes = fetcher()
-            writeCached(url, bytes)
+            writeCached(url, null, null, bytes)
             future.complete(bytes)
             bytes
         } catch (error: Throwable) {
@@ -71,6 +74,8 @@ class HlsSegmentCache(
 
     fun clear() = synchronized(lock) {
         directory.listFiles()?.forEach { it.delete() }
+        metadataByKey.clear()
+        playbackPositions.clear()
     }
 
     fun stats(): HlsSegmentCacheStats = synchronized(lock) {
@@ -82,6 +87,17 @@ class HlsSegmentCache(
             misses = misses.get(),
             inFlight = inFlight.size,
         )
+    }
+
+    fun store(url: String, manifestId: String, segmentIndex: Int, bytes: ByteArray) {
+        writeCached(url, manifestId, segmentIndex, bytes)
+    }
+
+    fun readIfCached(url: String): ByteArray? = readCached(url)
+
+    fun updatePlaybackPosition(manifestId: String, currentPlayIndex: Int) = synchronized(lock) {
+        playbackPositions[manifestId] = currentPlayIndex
+        diagnosticsLogger("[diag] playback position update manifestId=$manifestId index=$currentPlayIndex")
     }
 
     private fun readCached(url: String): ByteArray? = synchronized(lock) {
@@ -96,11 +112,21 @@ class HlsSegmentCache(
         cacheFile(url).isFile
     }
 
-    private fun writeCached(url: String, bytes: ByteArray) = synchronized(lock) {
+    private fun writeCached(url: String, manifestId: String?, segmentIndex: Int?, bytes: ByteArray) = synchronized(lock) {
         directory.mkdirs()
-        val file = cacheFile(url)
+        val key = cacheKey(url)
+        val file = cacheFileForKey(key)
         file.writeBytes(bytes)
-        touch(file)
+        val accessOrder = touch(file)
+        metadataByKey[key] = CachedSegmentMetadata(
+            url = url,
+            manifestId = manifestId,
+            segmentIndex = segmentIndex,
+            lastAccessOrder = accessOrder,
+        )
+        diagnosticsLogger(
+            "[diag] cache write url=$url bytes=${bytes.size} manifestId=${manifestId ?: "-"} index=${segmentIndex ?: -1}",
+        )
         trimToMaxBytes()
     }
 
@@ -109,14 +135,28 @@ class HlsSegmentCache(
         var total = files.sumOf { it.length() }
         if (total <= maxBytes) return
 
-        files.sortedBy { it.lastModified() }.forEach { file ->
+        files.sortedWith(compareBy<File> { evictionBucket(it) }.thenBy { evictionRank(it) }.thenBy { it.lastModified() }).forEach { file ->
             if (total <= maxBytes) return
             val length = file.length()
-            if (file.delete()) total -= length
+            if (file.delete()) {
+                val metadata = metadataByKey[file.nameWithoutExtension]
+                metadataByKey.remove(file.nameWithoutExtension)
+                total -= length
+                diagnosticsLogger(
+                    "[diag] cache evict url=${metadata?.url ?: file.name} bytes=$length reason=max-bytes bucket=${evictionBucketForLog(metadata)}",
+                )
+            }
         }
         files = segmentFiles()
         if (files.sumOf { it.length() } > maxBytes) {
-            files.sortedBy { it.name }.forEach { it.delete() }
+            files.sortedBy { it.name }.forEach {
+                val metadata = metadataByKey[it.nameWithoutExtension]
+                metadataByKey.remove(it.nameWithoutExtension)
+                it.delete()
+                diagnosticsLogger(
+                    "[diag] cache evict url=${metadata?.url ?: it.name} bytes=${it.length()} reason=overflow-reset bucket=${evictionBucketForLog(metadata)}",
+                )
+            }
         }
     }
 
@@ -124,10 +164,16 @@ class HlsSegmentCache(
         directory.listFiles()?.filter { it.isFile && it.extension == "seg" }.orEmpty()
 
     private fun cacheFile(url: String): File =
-        File(directory, "${sha256(url)}.seg")
+        cacheFileForKey(cacheKey(url))
 
-    private fun touch(file: File) {
-        file.setLastModified(System.currentTimeMillis() + touchCounter.incrementAndGet())
+    private fun cacheFileForKey(key: String): File =
+        File(directory, "$key.seg")
+
+    private fun touch(file: File): Long {
+        val accessOrder = touchCounter.incrementAndGet()
+        file.setLastModified(System.currentTimeMillis() + accessOrder)
+        metadataByKey[file.nameWithoutExtension]?.lastAccessOrder = accessOrder
+        return accessOrder
     }
 
     private fun await(future: CompletableFuture<ByteArray>): ByteArray =
@@ -137,8 +183,40 @@ class HlsSegmentCache(
             throw error.cause ?: error
         }
 
+    private fun cacheKey(url: String): String = sha256(url)
+
+    private fun evictionBucket(file: File): Int {
+        val metadata = metadataByKey[file.nameWithoutExtension] ?: return 2
+        val manifestId = metadata.manifestId ?: return 2
+        val segmentIndex = metadata.segmentIndex ?: return 2
+        val playIndex = playbackPositions[manifestId] ?: return 2
+        return if (segmentIndex < playIndex) 0 else 1
+    }
+
+    private fun evictionRank(file: File): Long {
+        val metadata = metadataByKey[file.nameWithoutExtension] ?: return file.lastModified()
+        val manifestId = metadata.manifestId
+        val segmentIndex = metadata.segmentIndex
+        if (manifestId == null || segmentIndex == null) return metadata.lastAccessOrder
+        val playIndex = playbackPositions[manifestId] ?: return metadata.lastAccessOrder
+        return if (segmentIndex < playIndex) segmentIndex.toLong() else -segmentIndex.toLong()
+    }
+
     private fun sha256(value: String): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
         return digest.joinToString("") { "%02x".format(it) }
     }
+
+    private fun evictionBucketForLog(metadata: CachedSegmentMetadata?): String {
+        if (metadata?.manifestId == null || metadata.segmentIndex == null) return "untracked"
+        val playIndex = playbackPositions[metadata.manifestId] ?: return "unknown-playback"
+        return if (metadata.segmentIndex < playIndex) "played" else "forward"
+    }
 }
+
+private data class CachedSegmentMetadata(
+    val url: String,
+    val manifestId: String?,
+    val segmentIndex: Int?,
+    var lastAccessOrder: Long,
+)

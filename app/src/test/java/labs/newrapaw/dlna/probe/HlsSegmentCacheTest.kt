@@ -6,6 +6,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -92,5 +94,41 @@ class HlsSegmentCacheTest {
 
         assertEquals(0, cache.stats().entries)
         assertEquals(0, cache.stats().sizeBytes)
+    }
+
+    @Test
+    fun trimPrefersEvictingPlayedSegmentsBeforeFutureSegments() {
+        val cache = HlsSegmentCache(temporaryFolder.newFolder("cache"), maxBytes = 8)
+
+        cache.store(url = "u0", manifestId = "m", segmentIndex = 0, bytes = byteArrayOf(0, 0, 0, 0))
+        cache.store(url = "u1", manifestId = "m", segmentIndex = 1, bytes = byteArrayOf(1, 1, 1, 1))
+        cache.store(url = "u2", manifestId = "m", segmentIndex = 2, bytes = byteArrayOf(2, 2, 2, 2))
+
+        cache.updatePlaybackPosition(manifestId = "m", currentPlayIndex = 2)
+        cache.store(url = "u3", manifestId = "m", segmentIndex = 3, bytes = byteArrayOf(3, 3, 3, 3))
+
+        assertNull(cache.readIfCached("u0"))
+        assertNull(cache.readIfCached("u1"))
+        assertNotNull(cache.readIfCached("u2"))
+        assertNotNull(cache.readIfCached("u3"))
+    }
+
+    @Test
+    fun cacheEmitsDetailedDiagnosticsForStorePlaybackUpdateAndEviction() {
+        val logs = mutableListOf<String>()
+        val cache = HlsSegmentCache(
+            directory = temporaryFolder.newFolder("cache"),
+            maxBytes = 8,
+            diagnosticsLogger = logs::add,
+        )
+
+        cache.store(url = "u0", manifestId = "m", segmentIndex = 0, bytes = byteArrayOf(0, 0, 0, 0))
+        cache.store(url = "u1", manifestId = "m", segmentIndex = 1, bytes = byteArrayOf(1, 1, 1, 1))
+        cache.updatePlaybackPosition(manifestId = "m", currentPlayIndex = 1)
+        cache.store(url = "u2", manifestId = "m", segmentIndex = 2, bytes = byteArrayOf(2, 2, 2, 2))
+
+        assertTrue(logs.any { it.contains("[diag] cache write") && it.contains("url=u0") })
+        assertTrue(logs.any { it.contains("[diag] playback position update") && it.contains("manifestId=m") })
+        assertTrue(logs.any { it.contains("[diag] cache evict") && it.contains("reason=max-bytes") })
     }
 }

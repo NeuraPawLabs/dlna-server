@@ -43,6 +43,7 @@ class LocalHlsProxy(
         onPauseRequested = onPauseRequested,
     )
     private var serverSocket: ServerSocket? = null
+    private var activeVodSession: VodPrefetchSession? = null
 
     val port: Int
         get() = serverSocket?.localPort ?: 0
@@ -68,6 +69,7 @@ class LocalHlsProxy(
     override fun close() {
         running.set(false)
         runCatching { serverSocket?.close() }
+        activeVodSession?.cancel()
         upstreamRaceExecutor.shutdownNow()
         prefetchExecutor.shutdownNow()
         executor.shutdownNow()
@@ -107,6 +109,8 @@ class LocalHlsProxy(
                     method == "POST" && path.startsWith("/control/proxy/add") -> handleProxyAddRequest(body, output)
                     method == "POST" && path.startsWith("/control/proxy/select") -> handleProxySelectRequest(body, output)
                     method == "POST" && path.startsWith("/control/proxy/delete") -> handleProxyDeleteRequest(body, output)
+                    method == "POST" && path.startsWith("/control/prefetch/config") -> handlePrefetchConfigRequest(body, output)
+                    method == "POST" && path.startsWith("/control/logging/config") -> handleLoggingConfigRequest(body, output)
                     method == "POST" && path.startsWith("/control/cache/clear") -> handleCacheClearRequest(output)
                     path.startsWith("/proxy/hls.m3u8") -> handleManifest(path, output)
                     path.startsWith("/proxy/segment.ts") -> handleSegment(path, output)
@@ -261,6 +265,24 @@ class LocalHlsProxy(
         writeText(output, 200, "text/html", "Cache cleared")
     }
 
+    private fun handlePrefetchConfigRequest(body: String, output: OutputStream) {
+        val requested = decodeFormValue(body, "prefetchConcurrency")?.toIntOrNull()
+            ?: ProxySettingsState.DEFAULT_PREFETCH_CONCURRENCY
+        val next = proxySettingsStore.load().copy(prefetchConcurrency = requested).normalized()
+        proxySettingsStore.save(next)
+        activeVodSession?.updateConcurrency(next.prefetchConcurrency)
+        safeLog("Prefetch concurrency updated: ${next.prefetchConcurrency}")
+        writeText(output, 200, "text/html", "Prefetch concurrency updated")
+    }
+
+    private fun handleLoggingConfigRequest(body: String, output: OutputStream) {
+        val enabled = decodeFormValue(body, "detailedDiagnosticsEnabled") != null
+        val next = proxySettingsStore.load().copy(detailedDiagnosticsEnabled = enabled)
+        proxySettingsStore.save(next)
+        safeLog("Detailed diagnostics updated: $enabled")
+        writeText(output, 200, "text/html", "Logging setting updated")
+    }
+
     private fun handleManifest(path: String, output: OutputStream) {
         val upstreamUrl = extractUrl(path)
         if (upstreamUrl == null) {
@@ -272,7 +294,13 @@ class LocalHlsProxy(
         runCatching {
             fetchUpstreamBytes(upstreamUrl).toString(Charsets.UTF_8)
         }.onSuccess { manifest ->
-            scheduleSegmentPrefetch(manifest, upstreamUrl)
+            if (isVodManifest(manifest)) {
+                replaceVodSession(upstreamUrl, extractOrderedHlsSegmentEntries(manifest, upstreamUrl))
+            } else {
+                activeVodSession?.cancel()
+                activeVodSession = null
+                scheduleSegmentPrefetch(manifest, upstreamUrl)
+            }
             writeText(output, 200, "application/vnd.apple.mpegurl", rewriteHlsManifest(manifest, upstreamUrl, baseUrl))
         }.onFailure { error ->
             if (error is UpstreamFetchException) {
@@ -292,6 +320,7 @@ class LocalHlsProxy(
         }
 
         runCatching {
+            activeVodSession?.onSegmentRequested(upstreamUrl)
             cachedOrFetchSegment(upstreamUrl)
         }.onSuccess { bytes ->
             writeBytes(output, 200, "video/mp2t", bytes)
@@ -315,7 +344,12 @@ class LocalHlsProxy(
     }
 
     private fun cachedOrFetchSegment(upstreamUrl: String): ByteArray =
-        segmentCache?.getOrFetch(upstreamUrl) { fetchSegmentBytes(upstreamUrl) }
+        segmentCache?.getOrFetch(upstreamUrl) {
+            diagnosticsLog("download cache miss url=$upstreamUrl")
+            fetchSegmentBytes(upstreamUrl)
+        }?.also {
+            diagnosticsLog("download cache serve url=$upstreamUrl bytes=${it.size}")
+        }
             ?: fetchSegmentBytes(upstreamUrl)
 
     private fun fetchSegmentBytes(upstreamUrl: String): ByteArray {
@@ -338,8 +372,18 @@ class LocalHlsProxy(
 
     private fun executeUpstreamCall(upstreamUrl: String, client: OkHttpClient, source: String): ByteArray {
         val call = client.newCall(Request.Builder().url(upstreamUrl).build())
+        val startedAt = System.nanoTime()
+        diagnosticsLog("download start source=$source url=$upstreamUrl")
         return runCatching { executeCall(call) }
+            .onSuccess { bytes ->
+                val elapsedMs = nanosToMillis(startedAt)
+                diagnosticsLog("download complete source=$source url=$upstreamUrl bytes=${bytes.size} elapsedMs=$elapsedMs")
+            }
             .getOrElse { error ->
+                val elapsedMs = nanosToMillis(startedAt)
+                diagnosticsLog(
+                    "download fail source=$source url=$upstreamUrl elapsedMs=$elapsedMs error=${error::class.java.simpleName}:${error.message}",
+                )
                 if (error is UpstreamFetchException) throw error
                 throw UpstreamFetchException(502, "$source: ${error::class.java.simpleName}: ${error.message}")
             }
@@ -364,6 +408,7 @@ class LocalHlsProxy(
         val directCall = directClient().newCall(Request.Builder().url(upstreamUrl).build())
         val proxyCall = proxyClient(proxy).newCall(Request.Builder().url(upstreamUrl).build())
         val completion = ExecutorCompletionService<UpstreamRaceResult>(upstreamRaceExecutor)
+        diagnosticsLog("race start url=$upstreamUrl")
         val futures = listOf(
             completion.submit(Callable { executeRaceCall("direct", directCall) }),
             completion.submit(Callable { executeRaceCall("proxy", proxyCall) }),
@@ -374,9 +419,13 @@ class LocalHlsProxy(
             val result = completion.take().getOrFailure()
             if (result.bytes != null) {
                 safeLog("Upstream race winner: ${result.source}")
+                diagnosticsLog(
+                    "race winner url=$upstreamUrl source=${result.source} elapsedMs=${result.elapsedMs} loser=${if (result.source == "direct") "proxy" else "direct"}",
+                )
                 cancelRaceLosers(futures, directCall, proxyCall)
                 return result.bytes
             }
+            diagnosticsLog("race fail url=$upstreamUrl source=${result.source} elapsedMs=${result.elapsedMs} error=${result.failure}")
             failures.add("${result.source}: ${result.failure}")
         }
 
@@ -384,10 +433,24 @@ class LocalHlsProxy(
     }
 
     private fun executeRaceCall(source: String, call: Call): UpstreamRaceResult =
-        runCatching {
-            UpstreamRaceResult(source = source, bytes = executeCall(call), failure = null)
-        }.getOrElse {
-            UpstreamRaceResult(source = source, bytes = null, failure = "${it::class.java.simpleName}: ${it.message}")
+        run {
+            val startedAt = System.nanoTime()
+            diagnosticsLog("race leg start source=$source")
+            runCatching {
+                UpstreamRaceResult(
+                    source = source,
+                    bytes = executeCall(call),
+                    failure = null,
+                    elapsedMs = nanosToMillis(startedAt),
+                )
+            }.getOrElse {
+                UpstreamRaceResult(
+                    source = source,
+                    bytes = null,
+                    failure = "${it::class.java.simpleName}: ${it.message}",
+                    elapsedMs = nanosToMillis(startedAt),
+                )
+            }
         }
 
     private fun cancelRaceLosers(
@@ -408,6 +471,7 @@ class LocalHlsProxy(
                 source = "unknown",
                 bytes = null,
                 failure = "${error.cause?.javaClass?.simpleName ?: error::class.java.simpleName}: ${error.cause?.message ?: error.message}",
+                elapsedMs = -1,
             )
         }
 
@@ -431,6 +495,25 @@ class LocalHlsProxy(
                     fetchSegmentBytes(segmentUrl)
                 }
             }
+    }
+
+    private fun replaceVodSession(manifestUrl: String, entries: List<HlsSegmentEntry>) {
+        val cache = segmentCache ?: return
+        activeVodSession?.cancel()
+        activeVodSession = VodPrefetchSession(
+            manifestId = manifestUrl,
+            segmentEntries = entries,
+            initialConcurrency = proxySettingsStore.load().prefetchConcurrency,
+            fetchSegment = { entry -> fetchSegmentBytes(entry.url) },
+            cacheSegment = { url, index, bytes ->
+                cache.store(url = url, manifestId = manifestUrl, segmentIndex = index, bytes = bytes)
+            },
+            isCached = { url -> cache.readIfCached(url) != null },
+            logger = ::safeLog,
+            diagnosticsLogger = ::diagnosticsLog,
+            onPlaybackIndexUpdated = { index -> cache.updatePlaybackPosition(manifestUrl, index) },
+            executor = prefetchExecutor,
+        ).also { it.start() }
     }
 
     private fun cacheStats(): HlsSegmentCacheStats =
@@ -481,10 +564,19 @@ class LocalHlsProxy(
         runCatching { log(message) }
     }
 
+    private fun diagnosticsLog(message: String) {
+        if (!proxySettingsStore.load().detailedDiagnosticsEnabled) return
+        safeLog(if (message.startsWith("[diag]")) message else "[diag] $message")
+    }
+
+    private fun nanosToMillis(startedAt: Long): Long =
+        java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
+
     private data class UpstreamRaceResult(
         val source: String,
         val bytes: ByteArray?,
         val failure: String?,
+        val elapsedMs: Long,
     )
 
     private class UpstreamFetchException(

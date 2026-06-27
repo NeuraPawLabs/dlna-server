@@ -102,6 +102,39 @@ class ControlPageTest {
     }
 
     @Test
+    fun buildControlPageContainsPrefetchConcurrencyForm() {
+        val html = buildControlPage(
+            deviceName = "Honor Screen",
+            status = "Ready",
+            localPlaybackUrl = "http://127.0.0.1:43000",
+            proxySettings = ProxySettingsState(prefetchConcurrency = 4),
+            cacheStats = HlsSegmentCacheStats(entries = 0, sizeBytes = 0, hits = 0, misses = 0, inFlight = 0),
+            logs = emptyList(),
+        )
+
+        assertTrue(html.contains("name=\"prefetchConcurrency\""))
+        assertTrue(html.contains("action=\"/control/prefetch/config\""))
+        assertTrue(html.contains("value=\"4\""))
+    }
+
+    @Test
+    fun buildControlPageContainsDetailedDiagnosticsToggle() {
+        val html = buildControlPage(
+            deviceName = "Honor Screen",
+            status = "Ready",
+            localPlaybackUrl = "http://127.0.0.1:43000",
+            proxySettings = ProxySettingsState(detailedDiagnosticsEnabled = true),
+            cacheStats = HlsSegmentCacheStats(entries = 0, sizeBytes = 0, hits = 0, misses = 0, inFlight = 0),
+            logs = emptyList(),
+        )
+
+        assertTrue(html.contains("action=\"/control/logging/config\""))
+        assertTrue(html.contains("name=\"detailedDiagnosticsEnabled\""))
+        assertTrue(html.contains("Detailed VOD diagnostics"))
+        assertTrue(html.contains("checked"))
+    }
+
+    @Test
     fun decodeFormUrlExtractsLongSignedUrl() {
         val original = "https://origin.example/object?filename=video.m3u8&X-Amz-Signature=abc+123"
         val body = "url=${URLEncoder.encode(original, "UTF-8")}"

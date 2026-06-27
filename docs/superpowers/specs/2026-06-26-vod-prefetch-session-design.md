@@ -22,6 +22,7 @@ In scope:
 - parse the full segment list for VOD manifests
 - schedule sustained background segment downloads to the end of the asset
 - allow prefetch concurrency to be configured from the management page
+- allow verbose VOD diagnostics to be toggled from the management page
 - keep cache behavior aware of playback position
 - prefer player-critical requests over background prefetch work
 - expose enough logs and state for manual verification
@@ -79,6 +80,7 @@ Existing responsibilities stay unchanged:
 Additional configuration responsibility:
 
 - apply management-page updates to the active prefetch concurrency setting
+- apply management-page updates to the detailed VOD diagnostics setting
 
 ### `VodPrefetchSession`
 
@@ -126,6 +128,7 @@ Prefetch settings should be stored with the existing local management settings r
 Responsibilities:
 
 - persist the configured prefetch concurrency value
+- persist whether detailed VOD diagnostics are enabled
 - provide a default value when no value has been saved yet
 - expose the current value to both the management page and `VodPrefetchSession`
 
@@ -155,7 +158,8 @@ If these conditions are not met, fall back to the current lightweight prefetch p
    - if already in flight, wait for that result
    - if not started, issue an immediate player-priority fetch and advance playback position tracking
 10. When the user changes prefetch concurrency from the management page, the new value is clamped and applied to the active session immediately.
-11. When the user switches to another VOD URL, the old session is canceled and a new one is created.
+11. When the user toggles detailed VOD diagnostics from the management page, the active session and proxy logging path pick up the new mode immediately.
+12. When the user switches to another VOD URL, the old session is canceled and a new one is created.
 
 ## Download Scheduling
 
@@ -188,8 +192,10 @@ This keeps the pipeline full on slow links without overloading the source or sta
 Configuration handling:
 
 - the management page exposes a numeric prefetch concurrency control
+- the management page exposes a detailed VOD diagnostics toggle
 - the backend clamps submitted values into `1..6`
 - the stored default remains `3`
+- detailed diagnostics default to `false`
 - invalid or missing values fall back to `3`
 
 ## Cache Policy
@@ -241,18 +247,43 @@ When the upstream source is very slow:
 
 Add targeted logs so device testing can show whether the prefetcher is actually helping.
 
-Suggested log events:
+Logging should be split into two levels.
+
+Base logs stay enabled by default:
 
 - session created with manifest URL and segment count
 - session created with configured prefetch concurrency
-- background prefetch started
-- prefetched segment index and URL
-- player-priority fetch triggered for a not-yet-prefetched segment
 - prefetch concurrency updated from the management page
-- cache eviction with segment index and reason
-- prefetch retry and final skip
+- detailed diagnostics enabled or disabled from the management page
 - session canceled and replaced
 - session completed at end of manifest
+- manifest fetch failure
+- segment fetch failure
+
+Detailed diagnostics are controlled by a separate management-page toggle and are disabled by default.
+
+When detailed diagnostics are enabled, log these categories:
+
+- download path:
+  - segment cache hit
+  - segment cache miss
+  - background prefetch start with segment index and URL
+  - background prefetch complete with segment index and elapsed time
+  - player-priority fetch start with segment index and URL
+  - player-priority fetch complete with segment index and elapsed time
+- race path:
+  - direct request start
+  - proxy request start
+  - direct request completion or failure with elapsed time
+  - proxy request completion or failure with elapsed time
+  - race winner with elapsed time comparison
+- cache path:
+  - cache write with segment index and size
+  - playback position updates used for eviction
+  - eviction decision with segment index, manifest ID, and reason
+  - prefetch retry and final skip
+
+The detailed mode should not change playback behavior. It only adds observability.
 
 Optional future control-page stats:
 
@@ -263,6 +294,7 @@ Optional future control-page stats:
 - next prefetch index
 - active background downloads
 - configured prefetch concurrency
+- whether detailed diagnostics are enabled
 
 These metrics are useful but not required for the first implementation.
 
@@ -276,6 +308,7 @@ Add focused tests for:
 - ordered session creation from a manifest
 - bounded concurrency scheduling
 - concurrency reconfiguration while a session is active
+- detailed diagnostics setting persistence and default behavior
 - player-priority request promotion
 - retry and skip behavior
 - playback-aware eviction ordering
@@ -288,6 +321,7 @@ Use a fake slow upstream source and verify:
 - prefetched segments are served from cache without duplicate upstream fetches
 - player requests can wait on or preempt in-flight background work correctly
 - management-page concurrency changes alter the number of active background downloads without restarting playback
+- detailed diagnostics toggle changes whether verbose per-segment and per-race logs are emitted
 - session cancellation stops further prefetch for the old manifest
 
 ### Manual Verification
@@ -296,8 +330,11 @@ On device:
 
 - play a slow VOD HLS source
 - change prefetch concurrency from the management page during playback
+- toggle detailed diagnostics on and off during playback
 - confirm cache stats continue growing beyond the first few segments
 - confirm the session reacts to the new concurrency value without restarting playback
+- confirm basic logs remain readable when detailed diagnostics are off
+- confirm per-segment, per-race, and eviction logs appear only when detailed diagnostics are on
 - confirm logs show sustained prefetch activity toward the end of the asset
 - observe lower stall frequency compared with the current lightweight prefetch behavior
 

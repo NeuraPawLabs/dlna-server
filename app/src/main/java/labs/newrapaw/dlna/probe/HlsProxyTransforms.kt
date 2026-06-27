@@ -4,6 +4,11 @@ import okio.ByteString.Companion.decodeBase64
 import okio.ByteString.Companion.encodeUtf8
 import java.net.URI
 
+data class HlsSegmentEntry(
+    val index: Int,
+    val url: String,
+)
+
 fun encodeProxyUrl(url: String): String =
     url.encodeUtf8().base64Url().trimEnd('=')
 
@@ -16,6 +21,9 @@ fun isLikelyHlsManifest(url: String): Boolean =
 fun resolvePlayableUri(uri: String, proxyBaseUrl: String): String =
     if (isLikelyHlsManifest(uri)) "$proxyBaseUrl/proxy/hls.m3u8?u=${encodeProxyUrl(uri)}" else uri
 
+fun isVodManifest(manifest: String): Boolean =
+    manifest.lineSequence().any { it.trim() == "#EXT-X-ENDLIST" }
+
 fun rewriteHlsManifest(manifest: String, manifestUrl: String, proxyBaseUrl: String): String =
     manifest.lineSequence()
         .map { line -> rewriteManifestLine(line, manifestUrl, proxyBaseUrl) }
@@ -26,6 +34,15 @@ fun extractHlsSegmentUrls(manifest: String, manifestUrl: String): List<String> =
         .map { it.trim() }
         .filter { it.isNotEmpty() && !it.startsWith("#") }
         .map { URI(manifestUrl).resolve(it).toString() }
+        .toList()
+
+fun extractOrderedHlsSegmentEntries(manifest: String, manifestUrl: String): List<HlsSegmentEntry> =
+    manifest.lineSequence()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() && !it.startsWith("#") }
+        .mapIndexed { index, value ->
+            HlsSegmentEntry(index = index, url = URI(manifestUrl).resolve(value).toString())
+        }
         .toList()
 
 fun stripPngWrapperFromSegment(segment: ByteArray): ByteArray {

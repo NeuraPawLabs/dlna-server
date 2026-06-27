@@ -3,6 +3,9 @@ package labs.newrapaw.dlna.probe
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLEncoder
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -213,6 +216,190 @@ class LocalHlsProxyStabilityTest {
         }
     }
 
+    @Test
+    fun vodManifestStartsSustainedPrefetchSession() {
+        val logs = CopyOnWriteArrayList<String>()
+        val cache = HlsSegmentCache(temporaryFolder.newFolder("segments"), maxBytes = 1024 * 1024)
+        val manifestBody = """
+            #EXTM3U
+            #EXTINF:4.0,
+            seg-1.ts
+            #EXTINF:4.0,
+            seg-2.ts
+            #EXT-X-ENDLIST
+        """.trimIndent()
+        val upstream = multiResponseServer(
+            mapOf(
+                "/index.m3u8" to manifestBody,
+                "/seg-1.ts" to "segment-one",
+                "/seg-2.ts" to "segment-two",
+            ),
+        )
+        val proxy = LocalHlsProxy(
+            log = logs::add,
+            segmentCache = cache,
+        )
+
+        proxy.start()
+        try {
+            val upstreamUrl = "http://127.0.0.1:${upstream.localPort}/index.m3u8"
+            val path = "/proxy/hls.m3u8?u=${encodeProxyUrl(upstreamUrl)}"
+
+            val response = rawHttpRequest(proxy.port, "GET $path HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+
+            assertTrue(response.startsWith("HTTP/1.1 200"))
+            eventually {
+                assertTrue(logs.any { it.contains("VOD prefetch session created") })
+                assertTrue(cache.stats().entries >= 2)
+            }
+        } finally {
+            proxy.close()
+            upstream.close()
+        }
+    }
+
+    @Test
+    fun prefetchConcurrencyRouteAppliesToActiveSession() {
+        val logs = CopyOnWriteArrayList<String>()
+        val cache = HlsSegmentCache(temporaryFolder.newFolder("segments"), maxBytes = 1024 * 1024)
+        val store = InMemoryProxySettingsStore(ProxySettingsState(prefetchConcurrency = 1))
+        val manifestBody = """
+            #EXTM3U
+            #EXTINF:4.0,
+            seg-1.ts
+            #EXTINF:4.0,
+            seg-2.ts
+            #EXT-X-ENDLIST
+        """.trimIndent()
+        val upstream = multiResponseServer(
+            mapOf(
+                "/index.m3u8" to manifestBody,
+                "/seg-1.ts" to "segment-one",
+                "/seg-2.ts" to "segment-two",
+            ),
+        )
+        val proxy = LocalHlsProxy(
+            log = logs::add,
+            proxySettingsStore = store,
+            segmentCache = cache,
+        )
+
+        proxy.start()
+        try {
+            val upstreamUrl = "http://127.0.0.1:${upstream.localPort}/index.m3u8"
+            val manifestPath = "/proxy/hls.m3u8?u=${encodeProxyUrl(upstreamUrl)}"
+            rawHttpRequest(proxy.port, "GET $manifestPath HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+
+            val body = "prefetchConcurrency=5"
+            val updateResponse = rawHttpRequest(
+                proxy.port,
+                "POST /control/prefetch/config HTTP/1.1\r\n" +
+                    "Host: 127.0.0.1\r\n" +
+                    "Content-Length: ${body.length}\r\n\r\n" +
+                    body,
+            )
+
+            assertTrue(updateResponse.startsWith("HTTP/1.1 200"))
+            assertEquals(5, store.load().prefetchConcurrency)
+            eventually {
+                assertTrue(logs.any { it.contains("VOD prefetch concurrency updated: 5") })
+                assertTrue(logs.any { it.contains("Prefetch concurrency updated: 5") })
+            }
+        } finally {
+            proxy.close()
+            upstream.close()
+        }
+    }
+
+    @Test
+    fun loggingConfigRoutePersistsDetailedDiagnosticsFlag() {
+        val store = InMemoryProxySettingsStore()
+        val proxy = LocalHlsProxy(
+            log = {},
+            proxySettingsStore = store,
+        )
+
+        proxy.start()
+        try {
+            val enableBody = "detailedDiagnosticsEnabled=true"
+            val enableResponse = rawHttpRequest(
+                proxy.port,
+                "POST /control/logging/config HTTP/1.1\r\n" +
+                    "Host: 127.0.0.1\r\n" +
+                    "Content-Length: ${enableBody.length}\r\n\r\n" +
+                    enableBody,
+            )
+
+            assertTrue(enableResponse.startsWith("HTTP/1.1 200"))
+            assertTrue(store.load().detailedDiagnosticsEnabled)
+
+            val disableResponse = rawHttpRequest(
+                proxy.port,
+                "POST /control/logging/config HTTP/1.1\r\n" +
+                    "Host: 127.0.0.1\r\n" +
+                    "Content-Length: 0\r\n\r\n",
+            )
+
+            assertTrue(disableResponse.startsWith("HTTP/1.1 200"))
+            assertTrue(!store.load().detailedDiagnosticsEnabled)
+        } finally {
+            proxy.close()
+        }
+    }
+
+    @Test
+    fun detailedDiagnosticsLogsOnlyAfterLoggingRouteEnablesThem() {
+        val logs = CopyOnWriteArrayList<String>()
+        val cache = HlsSegmentCache(temporaryFolder.newFolder("segments"), maxBytes = 1024 * 1024)
+        val store = InMemoryProxySettingsStore()
+        val manifestBody = """
+            #EXTM3U
+            #EXTINF:4.0,
+            seg-1.ts
+            #EXT-X-ENDLIST
+        """.trimIndent()
+        val upstream = multiResponseServer(
+            mapOf(
+                "/index.m3u8" to manifestBody,
+                "/seg-1.ts" to "segment-one",
+            ),
+        )
+        val proxy = LocalHlsProxy(
+            log = logs::add,
+            proxySettingsStore = store,
+            segmentCache = cache,
+        )
+
+        proxy.start()
+        try {
+            val upstreamUrl = "http://127.0.0.1:${upstream.localPort}/index.m3u8"
+            val manifestPath = "/proxy/hls.m3u8?u=${encodeProxyUrl(upstreamUrl)}"
+            val segmentPath = "/proxy/segment.ts?u=${encodeProxyUrl("http://127.0.0.1:${upstream.localPort}/seg-1.ts")}"
+
+            rawHttpRequest(proxy.port, "GET $manifestPath HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            rawHttpRequest(proxy.port, "GET $segmentPath HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+
+            assertTrue(logs.none { it.contains("[diag]") })
+
+            val enableBody = "detailedDiagnosticsEnabled=true"
+            rawHttpRequest(
+                proxy.port,
+                "POST /control/logging/config HTTP/1.1\r\n" +
+                    "Host: 127.0.0.1\r\n" +
+                    "Content-Length: ${enableBody.length}\r\n\r\n" +
+                    enableBody,
+            )
+            rawHttpRequest(proxy.port, "GET $segmentPath HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+
+            eventually {
+                assertTrue(logs.any { it.contains("[diag]") })
+            }
+        } finally {
+            proxy.close()
+            upstream.close()
+        }
+    }
+
     private fun rawHttpRequest(port: Int, request: String): String {
         Socket("127.0.0.1", port).use { socket ->
             socket.getOutputStream().write(request.toByteArray(Charsets.UTF_8))
@@ -267,5 +454,49 @@ class LocalHlsProxyStabilityTest {
             }
         }.start()
         return server
+    }
+
+    private fun multiResponseServer(responses: Map<String, String>): ServerSocket {
+        val server = ServerSocket(0)
+        Thread {
+            runCatching {
+                while (!server.isClosed) {
+                    val socket = runCatching { server.accept() }.getOrNull() ?: break
+                    socket.use {
+                        val reader = BufferedReader(InputStreamReader(it.getInputStream()))
+                        val requestLine = reader.readLine().orEmpty()
+                        while (reader.readLine().orEmpty().isNotEmpty()) {
+                            // drain headers
+                        }
+                        val path = requestLine.split(" ").getOrElse(1) { "/" }
+                        val body = responses[path] ?: "not-found"
+                        val contentType = if (path.endsWith(".m3u8")) "application/vnd.apple.mpegurl" else "video/mp2t"
+                        val response = "HTTP/1.1 200 OK\r\n" +
+                            "Content-Type: $contentType\r\n" +
+                            "Content-Length: ${body.toByteArray(Charsets.UTF_8).size}\r\n" +
+                            "Connection: close\r\n\r\n" +
+                            body
+                        it.getOutputStream().write(response.toByteArray(Charsets.UTF_8))
+                        it.getOutputStream().flush()
+                    }
+                }
+            }
+        }.start()
+        return server
+    }
+
+    private fun eventually(timeoutMs: Long = 2000, assertion: () -> Unit) {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+        var lastError: AssertionError? = null
+        while (System.nanoTime() < deadline) {
+            try {
+                assertion()
+                return
+            } catch (error: AssertionError) {
+                lastError = error
+                Thread.sleep(25)
+            }
+        }
+        throw lastError ?: AssertionError("eventually block did not complete")
     }
 }

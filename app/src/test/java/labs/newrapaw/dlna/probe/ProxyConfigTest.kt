@@ -74,4 +74,44 @@ class ProxyConfigTest {
         assertEquals("direct", state.selectedProxyId)
         assertEquals(UpstreamMode.PROXY_ONLY, state.upstreamMode)
     }
+
+    @Test
+    fun proxySettingsClampPrefetchConcurrencyIntoAllowedRange() {
+        assertEquals(1, ProxySettingsState(prefetchConcurrency = -5).normalized().prefetchConcurrency)
+        assertEquals(6, ProxySettingsState(prefetchConcurrency = 999).normalized().prefetchConcurrency)
+        assertEquals(3, ProxySettingsState(prefetchConcurrency = 3).normalized().prefetchConcurrency)
+    }
+
+    @Test
+    fun proxyStateNormalizationPreservesExistingProxySelectionAndMode() {
+        val state = ProxySettingsState(
+            proxies = listOf(ProxyConfig("proxy-1", ProxyType.HTTP, "127.0.0.1", 8080)),
+            selectedProxyId = "proxy-1",
+            upstreamMode = UpstreamMode.RACE_DIRECT_AND_PROXY,
+            prefetchConcurrency = 42,
+        ).normalized()
+
+        assertEquals("proxy-1", state.selectedProxyId)
+        assertEquals(UpstreamMode.RACE_DIRECT_AND_PROXY, state.upstreamMode)
+        assertEquals(6, state.prefetchConcurrency)
+    }
+
+    @Test
+    fun proxySettingsDisableDetailedDiagnosticsByDefault() {
+        assertFalse(ProxySettingsState().detailedDiagnosticsEnabled)
+    }
+
+    @Test
+    fun proxyStateNormalizationPreservesDetailedDiagnosticsFlag() {
+        val state = ProxySettingsState(
+            proxies = listOf(ProxyConfig("proxy-1", ProxyType.HTTP, "127.0.0.1", 8080)),
+            selectedProxyId = "proxy-1",
+            upstreamMode = UpstreamMode.RACE_DIRECT_AND_PROXY,
+            prefetchConcurrency = 42,
+            detailedDiagnosticsEnabled = true,
+        ).normalized()
+
+        assertTrue(state.detailedDiagnosticsEnabled)
+        assertEquals(6, state.prefetchConcurrency)
+    }
 }

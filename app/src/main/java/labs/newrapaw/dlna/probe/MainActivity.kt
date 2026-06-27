@@ -54,6 +54,11 @@ class MainActivity : AppCompatActivity() {
         val segmentCache = HlsSegmentCache(
             directory = cacheDir.resolve("hls-segments"),
             maxBytes = HLS_CACHE_MAX_BYTES,
+            diagnosticsLogger = { message ->
+                if (proxySettingsStore.load().detailedDiagnosticsEnabled) {
+                    appendLog(message)
+                }
+            },
         )
         proxy = LocalHlsProxy(
             client = OkHttpClient(),
