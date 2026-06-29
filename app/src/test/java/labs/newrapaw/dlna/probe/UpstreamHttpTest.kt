@@ -6,7 +6,7 @@ import org.junit.Test
 class UpstreamHttpTest {
     @Test
     fun formatsHttpFailureWithBodySnippet() {
-        val message = formatUpstreamFailure(
+        val message = labs.newrapaw.dlna.probe.core.formatUpstreamFailure(
             statusCode = 402,
             statusMessage = "Payment Required",
             body = "auth_key expired\nplease refresh url",
@@ -17,7 +17,7 @@ class UpstreamHttpTest {
 
     @Test
     fun truncatesLongHttpFailureBody() {
-        val message = formatUpstreamFailure(
+        val message = labs.newrapaw.dlna.probe.core.formatUpstreamFailure(
             statusCode = 403,
             statusMessage = "Forbidden",
             body = "x".repeat(260),

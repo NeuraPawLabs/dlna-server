@@ -1,8 +1,17 @@
 .env
-.worktrees/
-.gradle/
-build/
-app/build/
 local.properties
-*.apk
 release.keystore
+
+# Local tooling
+.gradle/
+.kotlin/
+.superpowers/
+.worktrees/
+
+# IDE
+.idea/
+*.iml
+
+# Build outputs
+build/
+*.apk

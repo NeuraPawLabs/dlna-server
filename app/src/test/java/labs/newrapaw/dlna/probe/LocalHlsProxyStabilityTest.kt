@@ -1,24 +1,20 @@
 package labs.newrapaw.dlna.probe
 
+import java.io.BufferedReader
+import java.io.InputStream
+import java.io.InputStreamReader
+import java.net.SocketException
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLEncoder
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Rule
 import org.junit.Test
-import org.junit.rules.TemporaryFolder
 
 class LocalHlsProxyStabilityTest {
-    @get:Rule
-    val temporaryFolder = TemporaryFolder()
-
     @Test
     fun routeExceptionsReturnHttp500AndLogError() {
         val logs = mutableListOf<String>()
@@ -40,78 +36,68 @@ class LocalHlsProxyStabilityTest {
     }
 
     @Test
-    fun proxyManagementRoutesAddSelectAndDeleteProxySettings() {
-        val store = InMemoryProxySettingsStore()
-        val proxy = LocalHlsProxy(
-            log = {},
-            proxySettingsStore = store,
-        )
+    fun brokenPipeIsNotLoggedAsRequestFailure() {
+        val logs = mutableListOf<String>()
+        val proxy = LocalHlsProxy(log = { logs.add(it) })
 
         proxy.start()
         try {
-            val encoded = URLEncoder.encode("socks5h://proxy.example:1080", "UTF-8")
-            val addResponse = rawHttpRequest(
-                proxy.port,
-                "POST /control/proxy/add HTTP/1.1\r\n" +
-                    "Host: 127.0.0.1\r\n" +
-                    "Content-Length: ${"proxyUrl=$encoded".length}\r\n\r\n" +
-                    "proxyUrl=$encoded",
-            )
+            val method = LocalHlsProxy::class.java.getDeclaredMethod("shouldSuppressRequestFailureLog", Throwable::class.java)
+            method.isAccessible = true
 
-            assertTrue(addResponse.startsWith("HTTP/1.1 200"))
-            assertEquals("socks5h-proxy.example-1080", store.load().selectedProxyId)
-            assertEquals(1, store.load().proxies.size)
+            val suppressed = method.invoke(proxy, SocketException("Broken pipe")) as Boolean
 
-            val selectResponse = rawHttpRequest(
-                proxy.port,
-                "POST /control/proxy/select HTTP/1.1\r\n" +
-                    "Host: 127.0.0.1\r\n" +
-                    "Content-Length: ${"proxyId=direct".length}\r\n\r\n" +
-                    "proxyId=direct",
-            )
-
-            assertTrue(selectResponse.startsWith("HTTP/1.1 200"))
-            assertEquals("direct", store.load().selectedProxyId)
-
-            val deleteBody = "proxyId=socks5h-proxy.example-1080"
-            val deleteResponse = rawHttpRequest(
-                proxy.port,
-                "POST /control/proxy/delete HTTP/1.1\r\n" +
-                    "Host: 127.0.0.1\r\n" +
-                    "Content-Length: ${deleteBody.length}\r\n\r\n" +
-                    deleteBody,
-            )
-
-            assertTrue(deleteResponse.startsWith("HTTP/1.1 200"))
-            assertTrue(store.load().proxies.isEmpty())
+            assertTrue(suppressed)
+            assertTrue(logs.none { it.contains("Broken pipe") })
         } finally {
             proxy.close()
         }
     }
 
     @Test
-    fun segmentRouteCachesUpstreamBytesAcrossRepeatedRequests() {
+    fun adminPagesRenderAsSeparateRoutes() {
+        val proxy = LocalHlsProxy(log = {})
+
+        proxy.start()
+        try {
+            val play = rawHttpRequest(proxy.port, "GET /play HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            val cache = rawHttpRequest(proxy.port, "GET /cache HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            val logs = rawHttpRequest(proxy.port, "GET /logs-page HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            val settings = rawHttpRequest(proxy.port, "GET /settings HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+
+            assertTrue(play.startsWith("HTTP/1.1 200"))
+            assertTrue(cache.startsWith("HTTP/1.1 200"))
+            assertTrue(logs.startsWith("HTTP/1.1 200"))
+            assertTrue(settings.startsWith("HTTP/1.1 200"))
+            assertTrue(play.contains(">播放<"))
+            assertTrue(cache.contains(">缓存<"))
+            assertTrue(logs.contains(">日志<"))
+            assertTrue(settings.contains(">设置<"))
+        } finally {
+            proxy.close()
+        }
+    }
+
+    @Test
+    fun compatibilityProxyRoutesAreRemoved() {
         val upstreamHits = AtomicInteger(0)
         val upstream = singleResponseServer(upstreamHits, "segment-bytes")
-        val cache = HlsSegmentCache(temporaryFolder.newFolder("segments"), maxBytes = 1024)
-        val proxy = LocalHlsProxy(
-            log = {},
-            segmentCache = cache,
-        )
+        val proxy = LocalHlsProxy(log = {})
 
         proxy.start()
         try {
             val upstreamUrl = "http://127.0.0.1:${upstream.localPort}/seg0.ts"
             val path = "/proxy/segment.ts?u=${encodeProxyUrl(upstreamUrl)}"
 
-            val first = rawHttpRequest(proxy.port, "GET $path HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
-            val second = rawHttpRequest(proxy.port, "GET $path HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            val segment = rawHttpRequest(proxy.port, "GET $path HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            val manifest = rawHttpRequest(
+                proxy.port,
+                "GET /proxy/hls.m3u8?u=${encodeProxyUrl("http://127.0.0.1:${upstream.localPort}/index.m3u8")} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            )
 
-            assertTrue(first.contains("segment-bytes"))
-            assertTrue(second.contains("segment-bytes"))
-            assertEquals(1, upstreamHits.get())
-            assertEquals(1, cache.stats().hits)
-            assertEquals(1, cache.stats().misses)
+            assertTrue(segment.startsWith("HTTP/1.1 404"))
+            assertTrue(manifest.startsWith("HTTP/1.1 404"))
+            assertEquals(0, upstreamHits.get())
         } finally {
             proxy.close()
             upstream.close()
@@ -119,13 +105,8 @@ class LocalHlsProxyStabilityTest {
     }
 
     @Test
-    fun cacheClearRouteDeletesCachedSegments() {
-        val cache = HlsSegmentCache(temporaryFolder.newFolder("segments"), maxBytes = 1024)
-        cache.getOrFetch("https://cdn.example/seg.ts") { byteArrayOf(1, 2, 3) }
-        val proxy = LocalHlsProxy(
-            log = {},
-            segmentCache = cache,
-        )
+    fun cacheClearRouteStillReturnsSuccessWithoutLegacySegmentCache() {
+        val proxy = LocalHlsProxy(log = {})
 
         proxy.start()
         try {
@@ -135,267 +116,119 @@ class LocalHlsProxyStabilityTest {
             )
 
             assertTrue(response.startsWith("HTTP/1.1 200"))
-            assertEquals(0, cache.stats().entries)
-            assertEquals(0, cache.stats().sizeBytes)
         } finally {
             proxy.close()
         }
     }
 
     @Test
-    fun raceModeReturnsFirstSuccessfulProxyResponseWhenDirectIsSlow() {
-        val directHits = AtomicInteger(0)
-        val directStarted = CountDownLatch(1)
-        val direct = delayedResponseServer(directHits, directStarted, "direct-slow", delayMillis = 800)
-        val proxyHits = AtomicInteger(0)
-        val httpProxy = singleResponseServer(proxyHits, "proxy-fast")
-        val proxyConfig = ProxyConfig("p1", ProxyType.HTTP, "127.0.0.1", httpProxy.localPort)
-        val store = InMemoryProxySettingsStore(
-            ProxySettingsState(
-                proxies = listOf(proxyConfig),
-                selectedProxyId = proxyConfig.id,
-                upstreamMode = UpstreamMode.RACE_DIRECT_AND_PROXY,
-            ),
-        )
-        val proxy = LocalHlsProxy(
-            log = {},
-            proxySettingsStore = store,
-        )
-
-        proxy.start()
-        try {
-            val upstreamUrl = "http://127.0.0.1:${direct.localPort}/seg-race.ts"
-            val path = "/proxy/segment.ts?u=${encodeProxyUrl(upstreamUrl)}"
-
-            val response = rawHttpRequest(proxy.port, "GET $path HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
-
-            assertTrue(response.contains("proxy-fast"))
-            assertTrue(directStarted.await(2, TimeUnit.SECONDS))
-            assertEquals(1, proxyHits.get())
-        } finally {
-            proxy.close()
-            direct.close()
-            httpProxy.close()
-        }
-    }
-
-    @Test
-    fun raceModeAlsoAppliesToManifestRequests() {
-        val directHits = AtomicInteger(0)
-        val directStarted = CountDownLatch(1)
-        val direct = delayedResponseServer(directHits, directStarted, "#EXTM3U\n#EXT-X-ENDLIST", delayMillis = 800)
-        val proxyHits = AtomicInteger(0)
-        val httpProxy = singleResponseServer(proxyHits, "#EXTM3U\n#EXT-X-ENDLIST")
-        val proxyConfig = ProxyConfig("p1", ProxyType.HTTP, "127.0.0.1", httpProxy.localPort)
-        val store = InMemoryProxySettingsStore(
-            ProxySettingsState(
-                proxies = listOf(proxyConfig),
-                selectedProxyId = proxyConfig.id,
-                upstreamMode = UpstreamMode.RACE_DIRECT_AND_PROXY,
-            ),
-        )
-        val proxy = LocalHlsProxy(
-            log = {},
-            proxySettingsStore = store,
-        )
-
-        proxy.start()
-        try {
-            val upstreamUrl = "http://127.0.0.1:${direct.localPort}/index.m3u8"
-            val path = "/proxy/hls.m3u8?u=${encodeProxyUrl(upstreamUrl)}"
-
-            val response = rawHttpRequest(proxy.port, "GET $path HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
-
-            assertTrue(response.contains("#EXTM3U"))
-            assertTrue(directStarted.await(2, TimeUnit.SECONDS))
-            assertEquals(1, proxyHits.get())
-        } finally {
-            proxy.close()
-            direct.close()
-            httpProxy.close()
-        }
-    }
-
-    @Test
-    fun vodManifestStartsSustainedPrefetchSession() {
+    fun playRequestUsesSessionizedManifestAndServesAudioAndSubtitleAssets() {
+        val requestedUrls = CopyOnWriteArrayList<String>()
         val logs = CopyOnWriteArrayList<String>()
-        val cache = HlsSegmentCache(temporaryFolder.newFolder("segments"), maxBytes = 1024 * 1024)
-        val manifestBody = """
-            #EXTM3U
-            #EXTINF:4.0,
-            seg-1.ts
-            #EXTINF:4.0,
-            seg-2.ts
-            #EXT-X-ENDLIST
-        """.trimIndent()
         val upstream = multiResponseServer(
-            mapOf(
-                "/index.m3u8" to manifestBody,
-                "/seg-1.ts" to "segment-one",
-                "/seg-2.ts" to "segment-two",
+            responses = mapOf(
+                "/master.m3u8" to """
+                    #EXTM3U
+                    #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Main",LANGUAGE="zh",DEFAULT=YES,URI="audio/index.m3u8"
+                    #EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="ZH",LANGUAGE="zh",DEFAULT=YES,URI="subs/index.m3u8"
+                    #EXT-X-STREAM-INF:BANDWIDTH=800000,AUDIO="audio",SUBTITLES="subs"
+                    video/index.m3u8
+                """.trimIndent(),
+                "/video/index.m3u8" to """
+                    #EXTM3U
+                    #EXTINF:4.0,
+                    seg-1.ts
+                    #EXT-X-ENDLIST
+                """.trimIndent(),
+                "/audio/index.m3u8" to """
+                    #EXTM3U
+                    #EXTINF:4.0,
+                    audio-1.aac
+                    #EXT-X-ENDLIST
+                """.trimIndent(),
+                "/subs/index.m3u8" to """
+                    #EXTM3U
+                    #EXTINF:4.0,
+                    sub-1.vtt
+                    #EXT-X-ENDLIST
+                """.trimIndent(),
+                "/video/seg-1.ts" to "segment-one",
+                "/audio/audio-1.aac" to "audio-one",
+                "/subs/sub-1.vtt" to "WEBVTT\n\n00:00:00.000 --> 00:00:04.000\n字幕一\n",
+            ),
+            contentTypes = mapOf(
+                "/subs/sub-1.vtt" to "text/vtt",
             ),
         )
         val proxy = LocalHlsProxy(
             log = logs::add,
-            segmentCache = cache,
-        )
-
-        proxy.start()
-        try {
-            val upstreamUrl = "http://127.0.0.1:${upstream.localPort}/index.m3u8"
-            val path = "/proxy/hls.m3u8?u=${encodeProxyUrl(upstreamUrl)}"
-
-            val response = rawHttpRequest(proxy.port, "GET $path HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
-
-            assertTrue(response.startsWith("HTTP/1.1 200"))
-            eventually {
-                assertTrue(logs.any { it.contains("VOD prefetch session created") })
-                assertTrue(cache.stats().entries >= 2)
-            }
-        } finally {
-            proxy.close()
-            upstream.close()
-        }
-    }
-
-    @Test
-    fun prefetchConcurrencyRouteAppliesToActiveSession() {
-        val logs = CopyOnWriteArrayList<String>()
-        val cache = HlsSegmentCache(temporaryFolder.newFolder("segments"), maxBytes = 1024 * 1024)
-        val store = InMemoryProxySettingsStore(ProxySettingsState(prefetchConcurrency = 1))
-        val manifestBody = """
-            #EXTM3U
-            #EXTINF:4.0,
-            seg-1.ts
-            #EXTINF:4.0,
-            seg-2.ts
-            #EXT-X-ENDLIST
-        """.trimIndent()
-        val upstream = multiResponseServer(
-            mapOf(
-                "/index.m3u8" to manifestBody,
-                "/seg-1.ts" to "segment-one",
-                "/seg-2.ts" to "segment-two",
+            onPlayRequested = requestedUrls::add,
+            proxySettingsStore = InMemoryProxySettingsStore(
+                ProxySettingsState(),
             ),
         )
-        val proxy = LocalHlsProxy(
-            log = logs::add,
-            proxySettingsStore = store,
-            segmentCache = cache,
-        )
 
         proxy.start()
         try {
-            val upstreamUrl = "http://127.0.0.1:${upstream.localPort}/index.m3u8"
-            val manifestPath = "/proxy/hls.m3u8?u=${encodeProxyUrl(upstreamUrl)}"
-            rawHttpRequest(proxy.port, "GET $manifestPath HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
-
-            val body = "prefetchConcurrency=5"
-            val updateResponse = rawHttpRequest(
-                proxy.port,
-                "POST /control/prefetch/config HTTP/1.1\r\n" +
-                    "Host: 127.0.0.1\r\n" +
-                    "Content-Length: ${body.length}\r\n\r\n" +
-                    body,
-            )
-
-            assertTrue(updateResponse.startsWith("HTTP/1.1 200"))
-            assertEquals(5, store.load().prefetchConcurrency)
-            eventually {
-                assertTrue(logs.any { it.contains("VOD prefetch concurrency updated: 5") })
-                assertTrue(logs.any { it.contains("Prefetch concurrency updated: 5") })
-            }
-        } finally {
-            proxy.close()
-            upstream.close()
-        }
-    }
-
-    @Test
-    fun loggingConfigRoutePersistsDetailedDiagnosticsFlag() {
-        val store = InMemoryProxySettingsStore()
-        val proxy = LocalHlsProxy(
-            log = {},
-            proxySettingsStore = store,
-        )
-
-        proxy.start()
-        try {
-            val enableBody = "detailedDiagnosticsEnabled=true"
-            val enableResponse = rawHttpRequest(
-                proxy.port,
-                "POST /control/logging/config HTTP/1.1\r\n" +
-                    "Host: 127.0.0.1\r\n" +
-                    "Content-Length: ${enableBody.length}\r\n\r\n" +
-                    enableBody,
-            )
-
-            assertTrue(enableResponse, enableResponse.startsWith("HTTP/1.1 200"))
-            assertTrue(store.load().detailedDiagnosticsEnabled)
-            assertTrue(enableResponse.contains("Content-Type: application/json"))
-            assertTrue(enableResponse.contains("\"ok\":true"))
-
-            val disableResponse = rawHttpRequest(
-                proxy.port,
-                "POST /control/logging/config HTTP/1.1\r\n" +
-                    "Host: 127.0.0.1\r\n" +
-                    "Content-Length: 0\r\n\r\n",
-            )
-
-            assertTrue(disableResponse.startsWith("HTTP/1.1 200"))
-            assertTrue(!store.load().detailedDiagnosticsEnabled)
-        } finally {
-            proxy.close()
-        }
-    }
-
-    @Test
-    fun detailedDiagnosticsLogsOnlyAfterLoggingRouteEnablesThem() {
-        val logs = CopyOnWriteArrayList<String>()
-        val cache = HlsSegmentCache(temporaryFolder.newFolder("segments"), maxBytes = 1024 * 1024)
-        val store = InMemoryProxySettingsStore()
-        val manifestBody = """
-            #EXTM3U
-            #EXTINF:4.0,
-            seg-1.ts
-            #EXT-X-ENDLIST
-        """.trimIndent()
-        val upstream = multiResponseServer(
-            mapOf(
-                "/index.m3u8" to manifestBody,
-                "/seg-1.ts" to "segment-one",
-            ),
-        )
-        val proxy = LocalHlsProxy(
-            log = logs::add,
-            proxySettingsStore = store,
-            segmentCache = cache,
-        )
-
-        proxy.start()
-        try {
-            val upstreamUrl = "http://127.0.0.1:${upstream.localPort}/index.m3u8"
-            val manifestPath = "/proxy/hls.m3u8?u=${encodeProxyUrl(upstreamUrl)}"
-            val segmentPath = "/proxy/segment.ts?u=${encodeProxyUrl("http://127.0.0.1:${upstream.localPort}/seg-1.ts")}"
-
-            rawHttpRequest(proxy.port, "GET $manifestPath HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
-            rawHttpRequest(proxy.port, "GET $segmentPath HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
-
-            assertTrue(logs.none { it.contains("[diag]") })
-
-            val enableBody = "detailedDiagnosticsEnabled=true"
+            val body = "url=${URLEncoder.encode("http://127.0.0.1:${upstream.localPort}/master.m3u8", "UTF-8")}"
             rawHttpRequest(
                 proxy.port,
-                "POST /control/logging/config HTTP/1.1\r\n" +
-                    "Host: 127.0.0.1\r\n" +
-                    "Content-Length: ${enableBody.length}\r\n\r\n" +
-                    enableBody,
+                "POST /control/play HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: ${body.length}\r\n\r\n$body",
             )
-            rawHttpRequest(proxy.port, "GET $segmentPath HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            val manifestPath = java.net.URI(requestedUrls.single()).path
+            val sessionId = manifestPath.substringAfter("/session/").substringBefore("/")
 
-            eventually {
-                assertTrue(logs.any { it.contains("[diag]") })
-            }
+            val masterResponse = rawHttpRequest(
+                proxy.port,
+                "GET $manifestPath HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            )
+
+            assertTrue(masterResponse.startsWith("HTTP/1.1 200"))
+            assertTrue(masterResponse.contains("/session/$sessionId/audio/"))
+            assertTrue(masterResponse.contains("/session/$sessionId/subtitle/"))
+
+            val audioPlaylistPath = masterResponse.lineSequence()
+                .first { it.contains("TYPE=AUDIO") }
+                .substringAfter("URI=\"")
+                .substringBefore("\"")
+            val subtitlePlaylistPath = masterResponse.lineSequence()
+                .first { it.contains("TYPE=SUBTITLES") }
+                .substringAfter("URI=\"")
+                .substringBefore("\"")
+
+            val audioPlaylistResponse = rawHttpRequest(
+                proxy.port,
+                "GET $audioPlaylistPath HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            )
+            val subtitlePlaylistResponse = rawHttpRequest(
+                proxy.port,
+                "GET $subtitlePlaylistPath HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            )
+
+            assertTrue(audioPlaylistResponse.startsWith("HTTP/1.1 200"))
+            assertTrue(subtitlePlaylistResponse.startsWith("HTTP/1.1 200"))
+            assertTrue(audioPlaylistResponse.contains("/session/$sessionId/asset/audio-"))
+            assertTrue(subtitlePlaylistResponse.contains("/session/$sessionId/asset/subtitle-"))
+
+            val audioAssetPath = audioPlaylistResponse.lineSequence()
+                .first { it.startsWith("/session/$sessionId/asset/") }
+            val subtitleAssetPath = subtitlePlaylistResponse.lineSequence()
+                .first { it.startsWith("/session/$sessionId/asset/") }
+
+            val audioAssetResponse = rawHttpRequest(
+                proxy.port,
+                "GET $audioAssetPath HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            )
+            val subtitleAssetResponse = rawHttpRequest(
+                proxy.port,
+                "GET $subtitleAssetPath HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            )
+
+            assertTrue(audioAssetResponse.startsWith("HTTP/1.1 200"))
+            assertTrue(audioAssetResponse.contains("audio-one"))
+            assertTrue(subtitleAssetResponse.startsWith("HTTP/1.1 200"))
+            assertTrue(subtitleAssetResponse.contains("WEBVTT"))
+            assertFalse(logs.any { it.startsWith("[diag]") })
         } finally {
             proxy.close()
             upstream.close()
@@ -403,8 +236,19 @@ class LocalHlsProxyStabilityTest {
     }
 
     @Test
-    fun playRouteReturnsJsonForInlineManagementUi() {
+    fun playRequestUsesCoreSessionUrlForLocalPlayback() {
         val requestedUrls = CopyOnWriteArrayList<String>()
+        val upstream = multiResponseServer(
+            responses = mapOf(
+                "/video.m3u8" to """
+                    #EXTM3U
+                    #EXTINF:4.0,
+                    seg-1.ts
+                    #EXT-X-ENDLIST
+                """.trimIndent(),
+                "/seg-1.ts" to "segment-one",
+            ),
+        )
         val proxy = LocalHlsProxy(
             log = {},
             onPlayRequested = requestedUrls::add,
@@ -412,23 +256,239 @@ class LocalHlsProxyStabilityTest {
 
         proxy.start()
         try {
-            val url = "https://example.com/live.m3u8"
-            val body = "url=${URLEncoder.encode(url, "UTF-8")}"
-            val response = rawHttpRequest(
+            val body = "url=${URLEncoder.encode("http://127.0.0.1:${upstream.localPort}/video.m3u8", "UTF-8")}"
+            rawHttpRequest(
                 proxy.port,
-                "POST /control/play HTTP/1.1\r\n" +
-                    "Host: 127.0.0.1\r\n" +
-                    "Content-Length: ${body.length}\r\n\r\n" +
-                    body,
+                "POST /control/play HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: ${body.length}\r\n\r\n$body",
             )
 
-            assertTrue(response, response.startsWith("HTTP/1.1 200"))
-            assertTrue(response.contains("Content-Type: application/json"))
-            assertTrue(response.contains("\"ok\":true"))
-            assertTrue(response.contains("\"message\":\"Play request sent. You can return to the TV.\""))
-            assertEquals(listOf(url), requestedUrls.toList())
+            val playbackUrl = requestedUrls.single()
+            val playbackPort = playbackUrl.substringAfter("http://127.0.0.1:").substringBefore("/").toInt()
+
+            assertFalse("local playback should no longer use app proxy port", playbackPort == proxy.port)
+            assertTrue(playbackUrl.endsWith("/manifest.m3u8"))
         } finally {
             proxy.close()
+            upstream.close()
+        }
+    }
+
+    @Test
+    fun manifestRequestDoesNotBlockOnStartupSegmentWarmup() {
+        val requestedUrls = CopyOnWriteArrayList<String>()
+        val upstream = multiResponseServer(
+            responses = mapOf(
+                "/video.m3u8" to """
+                    #EXTM3U
+                    #EXTINF:1.0,
+                    seg-0.ts
+                    #EXTINF:1.0,
+                    seg-1.ts
+                    #EXTINF:1.0,
+                    seg-2.ts
+                    #EXTINF:1.0,
+                    seg-3.ts
+                    #EXT-X-ENDLIST
+                """.trimIndent(),
+                "/seg-0.ts" to "seg0",
+                "/seg-1.ts" to "seg1",
+                "/seg-2.ts" to "seg2",
+                "/seg-3.ts" to "seg3",
+            ),
+            responseDelayMs = mapOf(
+                "/seg-0.ts" to 1_200L,
+                "/seg-1.ts" to 1_200L,
+                "/seg-2.ts" to 1_200L,
+                "/seg-3.ts" to 1_200L,
+            ),
+        )
+        val proxy = LocalHlsProxy(
+            log = {},
+            onPlayRequested = requestedUrls::add,
+        )
+
+        proxy.start()
+        try {
+            val body = "url=${URLEncoder.encode("http://127.0.0.1:${upstream.localPort}/video.m3u8", "UTF-8")}"
+            rawHttpRequest(
+                proxy.port,
+                "POST /control/play HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: ${body.length}\r\n\r\n$body",
+            )
+            val manifestPath = java.net.URI(requestedUrls.single()).path
+
+            val startedAt = System.nanoTime()
+            val masterResponse = rawHttpRequest(
+                proxy.port,
+                "GET $manifestPath HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            )
+            val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
+
+            assertTrue(masterResponse.startsWith("HTTP/1.1 200"))
+            assertFalse("manifest request should not wait for startup segments, elapsed=${elapsedMs}ms", elapsedMs >= 1_000L)
+        } finally {
+            proxy.close()
+            upstream.close()
+        }
+    }
+
+    @Test
+    fun sessionAssetTrafficLogsAreSuppressedByDefault() {
+        val logs = CopyOnWriteArrayList<String>()
+        val requestedUrls = CopyOnWriteArrayList<String>()
+        val upstream = multiResponseServer(
+            responses = mapOf(
+                "/video.m3u8" to """
+                    #EXTM3U
+                    #EXTINF:1.0,
+                    seg-0.ts
+                    #EXT-X-ENDLIST
+                """.trimIndent(),
+                "/seg-0.ts" to "seg0",
+            ),
+        )
+        val proxy = LocalHlsProxy(
+            log = logs::add,
+            onPlayRequested = requestedUrls::add,
+        )
+
+        proxy.start()
+        try {
+            val body = "url=${URLEncoder.encode("http://127.0.0.1:${upstream.localPort}/video.m3u8", "UTF-8")}"
+            rawHttpRequest(
+                proxy.port,
+                "POST /control/play HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: ${body.length}\r\n\r\n$body",
+            )
+            val manifestPath = java.net.URI(requestedUrls.single()).path
+            val masterResponse = rawHttpRequest(
+                proxy.port,
+                "GET $manifestPath HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            )
+            val videoPlaylistPath = masterResponse.lineSequence()
+                .first { it.startsWith("/session/") && it.endsWith("/video.m3u8") }
+            val videoPlaylistResponse = rawHttpRequest(
+                proxy.port,
+                "GET $videoPlaylistPath HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            )
+            val assetPath = videoPlaylistResponse.lineSequence()
+                .first { it.startsWith("/session/") && it.contains("/asset/") }
+            rawHttpRequest(
+                proxy.port,
+                "GET $assetPath HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            )
+
+            assertFalse(logs.any { it.contains("Session asset request") })
+            assertFalse(logs.any { it.contains("Session asset response status=200") })
+        } finally {
+            proxy.close()
+            upstream.close()
+        }
+    }
+
+    @Test
+    fun sessionAssetForwardingStartsStreamingBeforeCoreSegmentCompletes() {
+        val requestedUrls = CopyOnWriteArrayList<String>()
+        val upstream = ServerSocket(0)
+        Thread {
+            runCatching {
+                while (!upstream.isClosed) {
+                    val socket = runCatching { upstream.accept() }.getOrNull() ?: break
+                    socket.use {
+                        val reader = BufferedReader(InputStreamReader(it.getInputStream()))
+                        val requestLine = reader.readLine().orEmpty()
+                        while (reader.readLine().orEmpty().isNotEmpty()) {
+                            // drain headers
+                        }
+                        val path = requestLine.split(" ").getOrElse(1) { "/" }
+                        val output = it.getOutputStream()
+                        when (path) {
+                            "/video.m3u8" -> {
+                                val body = """
+                                    #EXTM3U
+                                    #EXTINF:1.0,
+                                    seg-0.ts
+                                    #EXTINF:1.0,
+                                    seg-1.ts
+                                    #EXTINF:1.0,
+                                    seg-2.ts
+                                    #EXTINF:1.0,
+                                    seg-3.ts
+                                    #EXT-X-ENDLIST
+                                """.trimIndent().toByteArray(Charsets.UTF_8)
+                                output.write(
+                                    ("HTTP/1.1 200 OK\r\nContent-Type: application/vnd.apple.mpegurl\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n")
+                                        .toByteArray(Charsets.UTF_8),
+                                )
+                                output.write(body)
+                                output.flush()
+                            }
+                            "/seg-0.ts" -> {
+                                val body = "segment-0".toByteArray(Charsets.UTF_8)
+                                output.write(
+                                    ("HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n")
+                                        .toByteArray(Charsets.UTF_8),
+                                )
+                                output.write(body)
+                                output.flush()
+                            }
+                            "/seg-1.ts", "/seg-2.ts" -> {
+                                val body = path.removePrefix("/").removeSuffix(".ts").toByteArray(Charsets.UTF_8)
+                                output.write(
+                                    ("HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n")
+                                        .toByteArray(Charsets.UTF_8),
+                                )
+                                output.write(body)
+                                output.flush()
+                            }
+                            "/seg-3.ts" -> {
+                                val head = ByteArray(8) { 'A'.code.toByte() }
+                                val tail = ByteArray(8) { 'B'.code.toByte() }
+                                output.write(
+                                    ("HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\nContent-Length: ${head.size + tail.size}\r\nConnection: close\r\n\r\n")
+                                        .toByteArray(Charsets.UTF_8),
+                                )
+                                output.write(head)
+                                output.flush()
+                                Thread.sleep(1_500L)
+                                output.write(tail)
+                                output.flush()
+                            }
+                        }
+                    }
+                }
+            }
+        }.start()
+        val proxy = LocalHlsProxy(
+            log = {},
+            onPlayRequested = requestedUrls::add,
+        )
+
+        proxy.start()
+        try {
+            val body = "url=${URLEncoder.encode("http://127.0.0.1:${upstream.localPort}/video.m3u8", "UTF-8")}"
+            rawHttpRequest(
+                proxy.port,
+                "POST /control/play HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: ${body.length}\r\n\r\n$body",
+            )
+            val sessionPathRoot = java.net.URI(requestedUrls.single()).path.substringBeforeLast("/")
+            val assetPath = "$sessionPathRoot/asset/video-3.ts"
+
+            val startedAt = System.nanoTime()
+            Socket("127.0.0.1", proxy.port).use { socket ->
+                socket.soTimeout = 5_000
+                val output = socket.getOutputStream()
+                output.write("GET $assetPath HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n".toByteArray(Charsets.UTF_8))
+                output.flush()
+                val input = socket.getInputStream()
+                readHttpHeaders(input)
+                val firstBodyByte = input.read()
+                val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L
+
+                assertTrue(firstBodyByte >= 0)
+                assertTrue("forwarded first body byte arrived too late: ${elapsedMs}ms", elapsedMs < 1_000L)
+            }
+        } finally {
+            proxy.close()
+            upstream.close()
         }
     }
 
@@ -461,34 +521,11 @@ class LocalHlsProxyStabilityTest {
         return server
     }
 
-    private fun delayedResponseServer(
-        hits: AtomicInteger,
-        started: CountDownLatch,
-        body: String,
-        delayMillis: Long,
+    private fun multiResponseServer(
+        responses: Map<String, String>,
+        contentTypes: Map<String, String> = emptyMap(),
+        responseDelayMs: Map<String, Long> = emptyMap(),
     ): ServerSocket {
-        val server = ServerSocket(0)
-        Thread {
-            runCatching {
-                val socket = server.accept()
-                socket.use {
-                    hits.incrementAndGet()
-                    started.countDown()
-                    Thread.sleep(delayMillis)
-                    val response = "HTTP/1.1 200 OK\r\n" +
-                        "Content-Type: video/mp2t\r\n" +
-                        "Content-Length: ${body.toByteArray(Charsets.UTF_8).size}\r\n" +
-                        "Connection: close\r\n\r\n" +
-                        body
-                    it.getOutputStream().write(response.toByteArray(Charsets.UTF_8))
-                    it.getOutputStream().flush()
-                }
-            }
-        }.start()
-        return server
-    }
-
-    private fun multiResponseServer(responses: Map<String, String>): ServerSocket {
         val server = ServerSocket(0)
         Thread {
             runCatching {
@@ -502,7 +539,9 @@ class LocalHlsProxyStabilityTest {
                         }
                         val path = requestLine.split(" ").getOrElse(1) { "/" }
                         val body = responses[path] ?: "not-found"
-                        val contentType = if (path.endsWith(".m3u8")) "application/vnd.apple.mpegurl" else "video/mp2t"
+                        responseDelayMs[path]?.let(Thread::sleep)
+                        val contentType = contentTypes[path]
+                            ?: if (path.endsWith(".m3u8")) "application/vnd.apple.mpegurl" else "video/mp2t"
                         val response = "HTTP/1.1 200 OK\r\n" +
                             "Content-Type: $contentType\r\n" +
                             "Content-Length: ${body.toByteArray(Charsets.UTF_8).size}\r\n" +
@@ -517,18 +556,13 @@ class LocalHlsProxyStabilityTest {
         return server
     }
 
-    private fun eventually(timeoutMs: Long = 2000, assertion: () -> Unit) {
-        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
-        var lastError: AssertionError? = null
-        while (System.nanoTime() < deadline) {
-            try {
-                assertion()
-                return
-            } catch (error: AssertionError) {
-                lastError = error
-                Thread.sleep(25)
-            }
+    private fun readHttpHeaders(input: InputStream) {
+        val sentinel = byteArrayOf('\r'.code.toByte(), '\n'.code.toByte(), '\r'.code.toByte(), '\n'.code.toByte())
+        var matched = 0
+        while (matched < sentinel.size) {
+            val next = input.read()
+            if (next < 0) throw AssertionError("unexpected eof while reading headers")
+            matched = if (next.toByte() == sentinel[matched]) matched + 1 else if (next.toByte() == sentinel[0]) 1 else 0
         }
-        throw lastError ?: AssertionError("eventually block did not complete")
     }
 }

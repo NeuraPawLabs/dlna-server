@@ -23,7 +23,9 @@ class DlnaRendererController(
     fun handleControlRequest(serviceName: String, soapActionHeader: String?, body: String): DlnaControlResponse {
         return runCatching {
             val action = parseSoapAction(soapActionHeader, body)
-            log("[DLNA] Action: $serviceName.${action.actionName}")
+            if (shouldLogAction(serviceName, action.actionName)) {
+                log("[DLNA] Action: $serviceName.${action.actionName}")
+            }
             val values = when (serviceName) {
                 "AVTransport" -> handleAvTransport(action.actionName, action.args)
                 "RenderingControl" -> handleRenderingControl(action.actionName, action.args)
@@ -164,6 +166,13 @@ class DlnaRendererController(
             else -> throw IllegalArgumentException("Unsupported ConnectionManager action $actionName")
         }
     }
+
+    private fun shouldLogAction(serviceName: String, actionName: String): Boolean =
+        when (serviceName to actionName) {
+            "AVTransport" to "GetPositionInfo",
+            "RenderingControl" to "GetVolume" -> false
+            else -> true
+        }
 }
 
 private data class ParsedSoapAction(

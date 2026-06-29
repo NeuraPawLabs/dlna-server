@@ -1,0 +1,50 @@
+package labs.newrapaw.dlna.probe.core.session
+
+data class SessionTimeline(
+    val slots: List<TimelineSlot> = emptyList(),
+    val assets: List<SessionAsset> = emptyList(),
+)
+
+data class TimelineSlot(
+    val slotIndex: Int,
+    val startMs: Long,
+    val endMs: Long,
+    val videoAssetId: String?,
+    val audioAssetIds: List<String> = emptyList(),
+    val subtitleAssetIds: List<String> = emptyList(),
+    val prerequisiteAssetIds: List<String> = emptyList(),
+    val audioPrerequisiteAssetIds: Map<String, List<String>> = emptyMap(),
+    val subtitlePrerequisiteAssetIds: Map<String, List<String>> = emptyMap(),
+)
+
+enum class SessionAssetKind {
+    MANIFEST,
+    VIDEO_SEGMENT,
+    AUDIO_SEGMENT,
+    SUBTITLE_SEGMENT,
+    INIT_SEGMENT,
+    KEY,
+}
+
+enum class SessionAssetState {
+    NOT_STARTED,
+    QUEUED,
+    DOWNLOADING,
+    READY,
+    FAILED,
+}
+
+data class SessionAsset(
+    val assetId: String,
+    val kind: SessionAssetKind,
+    val trackId: String?,
+    val url: String,
+    val durationMs: Long?,
+    val sequence: Int?,
+    val blocking: Boolean,
+    val requiredForStartup: Boolean,
+    val localPath: String?,
+    val keyMethod: String? = null,
+    val keyIv: String? = null,
+    val downloadState: SessionAssetState = SessionAssetState.NOT_STARTED,
+)

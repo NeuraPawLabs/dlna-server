@@ -191,7 +191,7 @@ class DlnaRendererControlTest {
     }
 
     @Test
-    fun logsEverySoapAction() {
+    fun logsMeaningfulSoapActions() {
         val logs = mutableListOf<String>()
         val renderer = DlnaRendererController(
             log = { logs.add(it) },
@@ -213,6 +213,31 @@ class DlnaRendererControlTest {
 
         assertTrue(logs.contains("[DLNA] Action: AVTransport.GetTransportInfo"))
         assertTrue(logs.contains("[DLNA] Action: ConnectionManager.GetProtocolInfo"))
+    }
+
+    @Test
+    fun skipsLoggingNoisyPollingSoapActions() {
+        val logs = mutableListOf<String>()
+        val renderer = DlnaRendererController(
+            log = { logs.add(it) },
+            onPlayRequested = {},
+            onStopRequested = {},
+            onPauseRequested = {},
+        )
+
+        renderer.handleControlRequest(
+            serviceName = "AVTransport",
+            soapActionHeader = "\"urn:schemas-upnp-org:service:AVTransport:1#GetPositionInfo\"",
+            body = soapAction("GetPositionInfo"),
+        )
+        renderer.handleControlRequest(
+            serviceName = "RenderingControl",
+            soapActionHeader = "\"urn:schemas-upnp-org:service:RenderingControl:1#GetVolume\"",
+            body = soapAction("GetVolume"),
+        )
+
+        assertTrue(logs.none { it.contains("GetPositionInfo") })
+        assertTrue(logs.none { it.contains("GetVolume") })
     }
 
     @Test

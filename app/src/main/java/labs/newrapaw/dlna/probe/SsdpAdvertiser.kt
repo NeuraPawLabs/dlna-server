@@ -14,6 +14,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicBoolean as AtomicFlag
 
 class SsdpAdvertiser(
     context: Context,
@@ -22,6 +23,7 @@ class SsdpAdvertiser(
 ) : Closeable {
     private val appContext = context.applicationContext
     private val running = AtomicBoolean(false)
+    private val multicastSendPermissionLogged = AtomicFlag(false)
     private val executor: ScheduledExecutorService = Executors.newScheduledThreadPool(2)
     private var socket: MulticastSocket? = null
     private var multicastLock: WifiManager.MulticastLock? = null
@@ -135,7 +137,22 @@ class SsdpAdvertiser(
         val bytes = message.toByteArray(Charset.forName("UTF-8"))
         val packet = DatagramPacket(bytes, bytes.size, address, port)
         runCatching { socket?.send(packet) }
-            .onFailure { if (running.get()) log("[SSDP] Send failed: ${it.message}") }
+            .onFailure { error ->
+                if (!running.get()) return@onFailure
+                if (shouldSuppressSendFailure(error)) return@onFailure
+                log("[SSDP] Send failed: ${error.message}")
+            }
+    }
+
+    private fun shouldSuppressSendFailure(error: Throwable): Boolean {
+        val message = error.message.orEmpty()
+        val permissionDenied = message.contains("EPERM", ignoreCase = true) ||
+            message.contains("Operation not permitted", ignoreCase = true)
+        if (!permissionDenied) return false
+        if (multicastSendPermissionLogged.compareAndSet(false, true)) {
+            log("[SSDP] Multicast send not permitted on current network")
+        }
+        return true
     }
 
     private fun usn(uuid: String, searchTarget: String): String =

@@ -5,6 +5,7 @@ import java.nio.file.Paths
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -12,10 +13,10 @@ class HlsProxyTransformsTest {
     @Test
     fun encodeDecodeRoundTripDoesNotLeakExtension() {
         val original = "https://cdn.example/path/seg0.png?token=abc"
-        val encoded = encodeProxyUrl(original)
+        val encoded = labs.newrapaw.dlna.probe.core.encodeProxyUrl(original)
 
         assertFalse(encoded.contains(".png"))
-        assertEquals(original, decodeProxyUrl(encoded))
+        assertEquals(original, labs.newrapaw.dlna.probe.core.decodeProxyUrl(encoded))
     }
 
     @Test
@@ -27,28 +28,6 @@ class HlsProxyTransformsTest {
     }
 
     @Test
-    fun rewriteManifestRoutesAbsoluteAndRelativeSegmentsThroughProxy() {
-        val manifest = """
-            #EXTM3U
-            #EXTINF:6.0,
-            https://cdn.example/path/seg0.png
-            #EXTINF:6.0,
-            relative/seg1.png
-            #EXT-X-ENDLIST
-        """.trimIndent()
-
-        val rewritten = rewriteHlsManifest(
-            manifest = manifest,
-            manifestUrl = "https://origin.example/video/index.m3u8?token=abc",
-            proxyBaseUrl = "http://127.0.0.1:49152",
-        )
-
-        assertTrue(rewritten.contains("http://127.0.0.1:49152/proxy/segment.ts?u="))
-        assertFalse(rewritten.contains("cdn.example"))
-        assertFalse(rewritten.lines().filter { !it.startsWith("#") }.any { it.contains(".png") })
-    }
-
-    @Test
     fun detectsVodManifestFromEndlistTag() {
         val manifest = """
             #EXTM3U
@@ -57,26 +36,46 @@ class HlsProxyTransformsTest {
             #EXT-X-ENDLIST
         """.trimIndent()
 
-        assertTrue(isVodManifest(manifest))
+        assertTrue(labs.newrapaw.dlna.probe.core.isVodManifest(manifest))
     }
 
     @Test
-    fun extractsOrderedSegmentEntriesFromVodManifest() {
+    fun parseSingleVariantMasterManifestIncludesAudioAndSubtitleTracks() {
         val manifest = """
             #EXTM3U
-            #EXTINF:4.0,
-            seg-1.ts
-            #EXTINF:4.0,
-            seg-2.ts
-            #EXT-X-ENDLIST
+            #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Main",LANGUAGE="zh",DEFAULT=YES,URI="audio/index.m3u8"
+            #EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="ZH",LANGUAGE="zh",DEFAULT=YES,URI="subs/index.m3u8"
+            #EXT-X-STREAM-INF:BANDWIDTH=800000,AUDIO="audio",SUBTITLES="subs"
+            video/index.m3u8
         """.trimIndent()
 
-        assertEquals(
-            listOf(
-                HlsSegmentEntry(index = 0, url = "https://example.com/seg-1.ts"),
-                HlsSegmentEntry(index = 1, url = "https://example.com/seg-2.ts"),
+        val playlist = labs.newrapaw.dlna.probe.core.parseSingleVariantMasterManifest(
+            manifest = manifest,
+            manifestUrl = "https://example.com/master.m3u8",
+        )
+
+        assertEquals("https://example.com/video/index.m3u8", playlist?.variantUrl)
+        assertEquals(1, playlist?.audioTracks?.size)
+        assertEquals("https://example.com/audio/index.m3u8", playlist?.audioTracks?.single()?.uri)
+        assertEquals(1, playlist?.subtitleTracks?.size)
+        assertEquals("https://example.com/subs/index.m3u8", playlist?.subtitleTracks?.single()?.uri)
+    }
+
+    @Test
+    fun parseSingleVariantMasterManifestRejectsMultipleVariants() {
+        val manifest = """
+            #EXTM3U
+            #EXT-X-STREAM-INF:BANDWIDTH=800000
+            video/index.m3u8
+            #EXT-X-STREAM-INF:BANDWIDTH=1200000
+            video-hd/index.m3u8
+        """.trimIndent()
+
+        assertNull(
+            labs.newrapaw.dlna.probe.core.parseSingleVariantMasterManifest(
+                manifest = manifest,
+                manifestUrl = "https://example.com/master.m3u8",
             ),
-            extractOrderedHlsSegmentEntries(manifest, "https://example.com/master.m3u8"),
         )
     }
 
@@ -92,7 +91,7 @@ class HlsProxyTransformsTest {
         ts[188] = 0x47
         ts[376] = 0x47
 
-        assertArrayEquals(ts, stripPngWrapperFromSegment(wrapper + ts))
+        assertArrayEquals(ts, labs.newrapaw.dlna.probe.core.stripPngWrapperFromSegment(wrapper + ts))
     }
 
     @Test
@@ -102,6 +101,6 @@ class HlsProxyTransformsTest {
         ts[188] = 0x47
         ts[376] = 0x47
 
-        assertArrayEquals(ts, stripPngWrapperFromSegment(ts))
+        assertArrayEquals(ts, labs.newrapaw.dlna.probe.core.stripPngWrapperFromSegment(ts))
     }
 }

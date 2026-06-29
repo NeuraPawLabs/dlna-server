@@ -2,7 +2,9 @@ package labs.newrapaw.dlna.probe
 
 import android.content.Intent
 import android.graphics.Color
+import android.os.Handler
 import android.os.Bundle
+import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
 import android.view.View
@@ -14,6 +16,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import androidx.core.content.ContextCompat
@@ -35,8 +38,24 @@ class MainActivity : AppCompatActivity() {
     private lateinit var instructionView: TextView
     private lateinit var managementUrlView: TextView
     private lateinit var chromeViews: List<View>
+    private var playbackRecoveryAttempts = 0
+    private var lastRecoverySeekPositionMs: Long? = null
+    private val telemetryHandler = Handler(Looper.getMainLooper())
+    private val telemetryIntervalMs = 500L
+    private val telemetryUpdater = object : Runnable {
+        override fun run() {
+            if (::player.isInitialized) {
+                proxy.updatePlayerTelemetry(
+                    positionMs = player.currentPosition.takeIf { it >= 0L },
+                    bufferedPositionMs = player.bufferedPosition.takeIf { it >= 0L },
+                    isLoading = player.isLoading,
+                )
+            }
+            telemetryHandler.postDelayed(this, telemetryIntervalMs)
+        }
+    }
     private val menuItemViews = linkedMapOf<TvMenuItem, TextView>()
-    private val logs = ArrayDeque<String>()
+    private val logs = UiLogBuffer(maxEntries = 1000)
     private val logLock = Any()
     private var isFullscreenPlayback = false
     private var selectedMenuItem = TvMenuItem.PLAY
@@ -46,26 +65,27 @@ class MainActivity : AppCompatActivity() {
 
         keepScreenOn()
         startRendererForegroundService()
-        player = ExoPlayer.Builder(this).build()
+        player = ExoPlayer.Builder(this)
+            .setLoadControl(
+                DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(
+                        15_000,
+                        120_000,
+                        1_000,
+                        2_000,
+                    )
+                    .build(),
+            )
+            .build()
         updater = ApkUpdater(this, OkHttpClient(), ::appendLog)
         proxySettingsStore = SharedPreferencesProxySettingsStore(
             getSharedPreferences("newrapaw_dlna_settings", MODE_PRIVATE),
-        )
-        val segmentCache = HlsSegmentCache(
-            directory = cacheDir.resolve("hls-segments"),
-            maxBytes = HLS_CACHE_MAX_BYTES,
-            diagnosticsLogger = { message ->
-                if (proxySettingsStore.load().detailedDiagnosticsEnabled) {
-                    appendLog(message)
-                }
-            },
         )
         proxy = LocalHlsProxy(
             client = OkHttpClient(),
             log = ::appendLog,
             getLogs = ::logSnapshot,
             proxySettingsStore = proxySettingsStore,
-            segmentCache = segmentCache,
             dlnaConfig = ::dlnaDeviceConfig,
             onPlayRequested = { url -> postToUi("play") { playUrl(url) } },
             onStopRequested = { postToUi("stop") { stopPlayback() } },
@@ -82,10 +102,12 @@ class MainActivity : AppCompatActivity() {
         appendLog("Open on phone: ${publicControlUrl()}")
         startSsdp()
         setStatus("Idle")
+        telemetryHandler.post(telemetryUpdater)
     }
 
     override fun onDestroy() {
         ssdp?.close()
+        telemetryHandler.removeCallbacksAndMessages(null)
         player.release()
         proxy.close()
         super.onDestroy()
@@ -212,17 +234,74 @@ class MainActivity : AppCompatActivity() {
                     else -> "Unknown"
                 }
                 setStatus(label)
-                appendLog("Player: $label")
+                proxy.updatePlaybackStatus(
+                    when (playbackState) {
+                        Player.STATE_IDLE -> PlaybackDiagnosticsStatus.IDLE
+                        Player.STATE_BUFFERING -> PlaybackDiagnosticsStatus.BUFFERING
+                        Player.STATE_READY -> PlaybackDiagnosticsStatus.PLAYING
+                        Player.STATE_ENDED -> PlaybackDiagnosticsStatus.STOPPED
+                        else -> PlaybackDiagnosticsStatus.IDLE
+                    },
+                )
+                if (playbackState == Player.STATE_READY) {
+                    val recoveryTarget = lastRecoverySeekPositionMs
+                    if (recoveryTarget != null && player.currentPosition >= recoveryTarget + 3_000L) {
+                        playbackRecoveryAttempts = 0
+                        lastRecoverySeekPositionMs = null
+                    }
+                }
+                if (playbackState == Player.STATE_ENDED) {
+                    playbackRecoveryAttempts = 0
+                    lastRecoverySeekPositionMs = null
+                }
                 when (playbackState) {
                     Player.STATE_BUFFERING, Player.STATE_READY -> enterFullscreenPlayback()
                     Player.STATE_ENDED -> exitFullscreenPlayback()
                     else -> Unit
                 }
+                proxy.updatePlayerTelemetry(
+                    positionMs = player.currentPosition.takeIf { it >= 0L },
+                    bufferedPositionMs = player.bufferedPosition.takeIf { it >= 0L },
+                    isLoading = player.isLoading,
+                )
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                val recovery = decidePlayerErrorRecovery(
+                    errorCode = error.errorCode,
+                    currentPositionMs = player.currentPosition.takeIf { it >= 0L },
+                    durationMs = player.duration.takeIf { it >= 0L },
+                    attemptCount = playbackRecoveryAttempts,
+                )
+                if (recovery.shouldRecover && recovery.seekPositionMs != null) {
+                    playbackRecoveryAttempts = recovery.nextAttemptCount
+                    lastRecoverySeekPositionMs = recovery.seekPositionMs
+                    setStatus("Buffering")
+                    proxy.updatePlaybackStatus(PlaybackDiagnosticsStatus.BUFFERING)
+                    proxy.updatePlaybackError(
+                        "Recovering from ${error.errorCodeName}: ${error.message}",
+                    )
+                    appendLog(
+                        "Player recoverable error: ${error.errorCodeName}: ${error.message}; " +
+                            "skip to ${recovery.seekPositionMs}ms " +
+                            "(${recovery.nextAttemptCount}/5)",
+                    )
+                    player.seekTo(recovery.seekPositionMs)
+                    player.prepare()
+                    player.play()
+                    return
+                }
+                playbackRecoveryAttempts = 0
+                lastRecoverySeekPositionMs = null
                 exitFullscreenPlayback()
                 setStatus("Error")
+                proxy.updatePlaybackStatus(PlaybackDiagnosticsStatus.FAILED)
+                proxy.updatePlaybackError("${error.errorCodeName}: ${error.message}")
+                proxy.updatePlayerTelemetry(
+                    positionMs = player.currentPosition.takeIf { it >= 0L },
+                    bufferedPositionMs = player.bufferedPosition.takeIf { it >= 0L },
+                    isLoading = player.isLoading,
+                )
                 appendLog("Player error: ${error.errorCodeName}: ${error.message}")
             }
         })
@@ -313,10 +392,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         runCatching {
-            val playable = resolvePlayableUri(source, proxy.baseUrl)
-            appendLog("Play: $playable")
+            appendLog("Play: $source")
+            playbackRecoveryAttempts = 0
+            lastRecoverySeekPositionMs = null
             enterFullscreenPlayback()
-            player.setMediaItem(MediaItem.fromUri(playable))
+            player.setMediaItem(MediaItem.fromUri(source))
             player.prepare()
             player.play()
         }.onFailure {
@@ -327,15 +407,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun stopPlayback() {
+        playbackRecoveryAttempts = 0
+        lastRecoverySeekPositionMs = null
         player.stop()
         exitFullscreenPlayback()
         setStatus("Stopped")
+        proxy.updatePlaybackStatus(PlaybackDiagnosticsStatus.STOPPED)
         appendLog("Stopped")
     }
 
     private fun pausePlayback() {
         player.pause()
         setStatus("Paused")
+        proxy.updatePlaybackStatus(PlaybackDiagnosticsStatus.PAUSED)
         appendLog("Paused")
     }
 
@@ -420,23 +504,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun appendLog(message: String) {
-        runCatching {
-            runOnUiThread {
-                runCatching {
-                    addLogEntry(message)
-                }
-            }
-        }
+        addLogEntry(message)
     }
 
     private fun addLogEntry(message: String): List<String> = synchronized(logLock) {
-        logs.addLast(message)
-        while (logs.size > 50) logs.removeFirst()
-        logs.toList()
+        logs.append(message)
     }
 
     private fun logSnapshot(): List<String> = synchronized(logLock) {
-        logs.toList()
+        logs.snapshot()
     }
 
     private fun localIpAddress(): String =
@@ -492,10 +568,6 @@ class MainActivity : AppCompatActivity() {
     private fun deviceUuid(): String {
         val androidId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID).orEmpty()
         return UUID.nameUUIDFromBytes("newrapaw-dlna-$androidId".toByteArray(Charsets.UTF_8)).toString()
-    }
-
-    private companion object {
-        const val HLS_CACHE_MAX_BYTES = 1024L * 1024L * 1024L
     }
 
     private enum class TvMenuItem(val label: String) {

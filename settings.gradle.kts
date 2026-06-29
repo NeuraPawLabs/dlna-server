@@ -16,3 +16,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "PawCast"
 include(":app")
+include(":core")
+include(":desktop")
