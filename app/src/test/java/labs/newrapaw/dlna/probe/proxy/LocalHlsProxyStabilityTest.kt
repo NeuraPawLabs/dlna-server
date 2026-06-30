@@ -7,8 +7,11 @@ import java.net.SocketException
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLEncoder
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import labs.newrapaw.dlna.probe.core.InMemoryProxySettingsStore
 import labs.newrapaw.dlna.probe.core.ProxySettingsState
 import org.junit.Assert.assertEquals
@@ -389,7 +392,9 @@ class LocalHlsProxyStabilityTest {
     @Test
     fun sessionAssetForwardingStartsStreamingBeforeCoreSegmentCompletes() {
         val upstreamCompletionDelayMs = 2_000L
-        val forwardingDeadlineMs = 1_700L
+        val upstreamHeadSentAt = AtomicLong(0L)
+        val upstreamCompletedAt = AtomicLong(0L)
+        val upstreamCompleted = CountDownLatch(1)
         val requestedUrls = CopyOnWriteArrayList<String>()
         val upstream = ServerSocket(0)
         Thread {
@@ -452,9 +457,12 @@ class LocalHlsProxyStabilityTest {
                                 )
                                 output.write(head)
                                 output.flush()
+                                upstreamHeadSentAt.set(System.nanoTime())
                                 Thread.sleep(upstreamCompletionDelayMs)
+                                upstreamCompletedAt.set(System.nanoTime())
                                 output.write(tail)
                                 output.flush()
+                                upstreamCompleted.countDown()
                             }
                         }
                     }
@@ -476,7 +484,6 @@ class LocalHlsProxyStabilityTest {
             val sessionPathRoot = java.net.URI(requestedUrls.single()).path.substringBeforeLast("/")
             val assetPath = "$sessionPathRoot/asset/video-3.ts"
 
-            val startedAt = System.nanoTime()
             Socket("127.0.0.1", proxy.port).use { socket ->
                 socket.soTimeout = 5_000
                 val output = socket.getOutputStream()
@@ -485,12 +492,14 @@ class LocalHlsProxyStabilityTest {
                 val input = socket.getInputStream()
                 readHttpHeaders(input)
                 val firstBodyByte = input.read()
-                val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L
+                val firstBodyByteAt = System.nanoTime()
 
                 assertTrue(firstBodyByte >= 0)
+                assertTrue("upstream did not emit the first chunk", upstreamHeadSentAt.get() > 0L)
+                assertTrue("upstream did not finish the delayed segment in time", upstreamCompleted.await(5, TimeUnit.SECONDS))
                 assertTrue(
-                    "forwarded first body byte arrived too late: ${elapsedMs}ms (expected < ${forwardingDeadlineMs}ms before upstream completed in ${upstreamCompletionDelayMs}ms)",
-                    elapsedMs < forwardingDeadlineMs,
+                    "forwarded first body byte arrived after upstream completed: first=$firstBodyByteAt head=${upstreamHeadSentAt.get()} complete=${upstreamCompletedAt.get()}",
+                    firstBodyByteAt < upstreamCompletedAt.get(),
                 )
             }
         } finally {
