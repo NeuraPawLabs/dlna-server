@@ -7,6 +7,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
 import java.net.HttpURLConnection
@@ -23,6 +24,60 @@ import java.util.concurrent.atomic.AtomicInteger
 import com.sun.net.httpserver.HttpServer
 
 class CoreLocalHlsProxyTest {
+    @Test
+    fun embeddedProxyCanServeSessionRoutesWithoutStartingCoreHttpServer() {
+        val upstream = HttpServer.create(InetSocketAddress(0), 0).apply {
+            executor = Executors.newCachedThreadPool()
+        }
+        upstream.createContext("/video.m3u8") { exchange ->
+            val body = """
+                #EXTM3U
+                #EXTINF:4.0,
+                seg-1.ts
+                #EXT-X-ENDLIST
+            """.trimIndent().toByteArray()
+            exchange.responseHeaders.add("Content-Type", "application/vnd.apple.mpegurl")
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        upstream.createContext("/seg-1.ts") { exchange ->
+            val body = "segment-one".toByteArray()
+            exchange.responseHeaders.add("Content-Type", "video/mp2t")
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        upstream.start()
+
+        val proxy = CoreLocalHlsProxy(
+            client = OkHttpClient(),
+            log = {},
+            serveHttp = false,
+        )
+
+        proxy.start()
+        try {
+            val session = proxy.openSession(
+                sourceUrl = "http://127.0.0.1:${upstream.address.port}/video.m3u8",
+                localBaseUrl = "http://127.0.0.1:4321",
+            )
+            val response = ByteArrayOutputStream()
+
+            val handled = proxy.handleSessionRequest(
+                method = "GET",
+                path = java.net.URI(session.localManifestUrl).path,
+                output = response,
+            )
+
+            assertTrue(handled)
+            assertEquals(0, proxy.port)
+            assertTrue(session.localManifestUrl.startsWith("http://127.0.0.1:4321/"))
+            assertTrue(response.toString(Charsets.UTF_8.name()).startsWith("HTTP/1.1 200"))
+        } finally {
+            proxy.close()
+            upstream.stop(0)
+        }
+    }
+
     @Test
     fun proxyStartsAndExposesBaseUrl() {
         val proxy = CoreLocalHlsProxy(

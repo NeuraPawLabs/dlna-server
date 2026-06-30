@@ -27,12 +27,12 @@
         </provider>
 
         <service
-            android:name=".RendererForegroundService"
+            android:name=".platform.RendererForegroundService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 
         <activity
-            android:name=".MainActivity"
+            android:name=".ui.MainActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

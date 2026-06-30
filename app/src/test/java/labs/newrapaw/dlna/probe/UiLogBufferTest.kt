@@ -1,5 +1,6 @@
 package labs.newrapaw.dlna.probe
 
+import labs.newrapaw.dlna.probe.ui.UiLogBuffer
 import org.junit.Assert.assertEquals
 import org.junit.Test
 

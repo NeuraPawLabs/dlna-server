@@ -9,26 +9,37 @@ import org.junit.Test
 class MainActivityHomeScreenTest {
     @Test
     fun homeScreenShowsOnlyCastingStatusAndManagementUrl() {
-        val sourcePath = Paths.get("src/main/java/labs/newrapaw/dlna/probe/MainActivity.kt")
-        val source = String(Files.readAllBytes(sourcePath), Charsets.UTF_8)
+        val activitySource = String(
+            Files.readAllBytes(Paths.get("src/main/java/labs/newrapaw/dlna/probe/ui/MainActivity.kt")),
+            Charsets.UTF_8,
+        )
+        val shellSource = String(
+            Files.readAllBytes(Paths.get("src/main/java/labs/newrapaw/dlna/probe/ui/MainActivityShell.kt")),
+            Charsets.UTF_8,
+        )
+        val helperSource = String(
+            Files.readAllBytes(Paths.get("src/main/java/labs/newrapaw/dlna/probe/ui/MainActivityChrome.kt")),
+            Charsets.UTF_8,
+        )
 
-        assertTrue(source.contains("\"PawCast\""))
-        assertTrue(source.contains("\"等待投屏...\""))
-        assertTrue(source.contains("\"请在同一网络下的投屏设备中选择本设备\""))
-        assertTrue(source.contains("\"播放\""))
-        assertTrue(source.contains("\"代理\""))
-        assertTrue(source.contains("\"日志\""))
-        assertTrue(source.contains("\"设置\""))
-        assertTrue(source.contains("LinearLayout.HORIZONTAL"))
-        assertTrue(source.contains("管理页面:"))
-        assertFalse(source.contains("\"m3u8 test URL\""))
-        assertFalse(source.contains("\"Play Test Stream\""))
-        assertFalse(source.contains("logView = TextView"))
+        assertTrue(shellSource.contains("\"PawCast\""))
+        assertTrue(shellSource.contains("\"播放\""))
+        assertTrue(shellSource.contains("\"代理\""))
+        assertTrue(shellSource.contains("\"日志\""))
+        assertTrue(shellSource.contains("\"设置\""))
+        assertTrue(shellSource.contains("LinearLayout.HORIZONTAL"))
+        assertTrue(shellSource.contains("renderHomeContent("))
+        assertTrue(helperSource.contains("\"等待投屏...\""))
+        assertTrue(helperSource.contains("\"请在同一网络下的投屏设备中选择本设备\""))
+        assertTrue(helperSource.contains("管理页面:"))
+        assertFalse(shellSource.contains("\"m3u8 test URL\""))
+        assertFalse(shellSource.contains("\"Play Test Stream\""))
+        assertFalse(shellSource.contains("logView = TextView"))
     }
 
     @Test
     fun tvMenuItemsAreFocusableClickableAndSelectable() {
-        val sourcePath = Paths.get("src/main/java/labs/newrapaw/dlna/probe/MainActivity.kt")
+        val sourcePath = Paths.get("src/main/java/labs/newrapaw/dlna/probe/ui/MainActivityShell.kt")
         val source = String(Files.readAllBytes(sourcePath), Charsets.UTF_8)
 
         assertTrue(source.contains("isFocusable = true"))

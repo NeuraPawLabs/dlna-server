@@ -21,7 +21,10 @@ class HlsProxyTransformsTest {
 
     @Test
     fun proxyUrlEncodingDoesNotUseAndroidApi26Base64() {
-        val sourcePath = Paths.get("src/main/java/labs/newrapaw/dlna/probe/HlsProxyTransforms.kt")
+        val sourcePath = listOf(
+            Paths.get("../core/src/main/java/labs/newrapaw/dlna/probe/core/HlsProxyTransforms.kt"),
+            Paths.get("core/src/main/java/labs/newrapaw/dlna/probe/core/HlsProxyTransforms.kt"),
+        ).first(Files::exists)
         val source = String(Files.readAllBytes(sourcePath), Charsets.UTF_8)
 
         assertFalse(source.contains("java.util.Base64"))

@@ -12,7 +12,7 @@ class ForegroundServiceManifestTest {
         val manifest = String(Files.readAllBytes(manifestPath), Charsets.UTF_8)
 
         assertTrue(manifest.contains("android.permission.FOREGROUND_SERVICE"))
-        assertTrue(manifest.contains("android:name=\".RendererForegroundService\""))
+        assertTrue(manifest.contains("android:name=\".platform.RendererForegroundService\""))
         assertTrue(manifest.contains("android:foregroundServiceType=\"mediaPlayback\""))
     }
 }
