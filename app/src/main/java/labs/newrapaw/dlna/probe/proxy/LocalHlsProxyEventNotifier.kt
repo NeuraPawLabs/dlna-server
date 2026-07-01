@@ -2,10 +2,9 @@ package labs.newrapaw.dlna.probe.proxy
 
 import java.io.Closeable
 import java.util.concurrent.ExecutorService
-import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.RejectedExecutionException
-import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import labs.newrapaw.dlna.probe.core.boundedExecutor
 import labs.newrapaw.dlna.probe.dlna.DlnaEventNotifyRequest
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -66,21 +65,6 @@ internal class LocalHlsProxyEventNotifier(
         const val APP_EVENT_NOTIFY_MAX_THREADS = 8
         const val APP_EVENT_NOTIFY_QUEUE_CAPACITY = 32
         const val APP_EVENT_NOTIFY_CALL_TIMEOUT_MS = 2_000L
-
-        fun boundedExecutor(
-            maxThreads: Int,
-            queueCapacity: Int,
-        ): ThreadPoolExecutor =
-            ThreadPoolExecutor(
-                maxThreads,
-                maxThreads,
-                60L,
-                TimeUnit.SECONDS,
-                LinkedBlockingQueue(queueCapacity),
-                ThreadPoolExecutor.AbortPolicy(),
-            ).apply {
-                allowCoreThreadTimeOut(true)
-            }
 
         fun buildEventNotifyClient(client: OkHttpClient): OkHttpClient {
             val existingCallTimeoutMs = client.callTimeoutMillis.toLong()

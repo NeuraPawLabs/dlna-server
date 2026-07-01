@@ -49,14 +49,14 @@ class MainActivityLoggingTest {
             Charsets.UTF_8,
         )
 
-        assertTrue(listenerSource.contains("proxy.updatePlaybackStatus("))
+        assertTrue(listenerSource.contains("playbackState.updatePlaybackStatus("))
         assertTrue(servicePlaybackSource.contains("PlaybackDiagnosticsStatus.BUFFERING"))
         assertTrue(stateSource.contains("PlaybackDiagnosticsStatus.PLAYING"))
         assertTrue(coordinatorSource.contains("applyCommandState(rendererPlayCommandState())"))
         assertTrue(coordinatorSource.contains("applyCommandState(rendererPauseCommandState())"))
         assertTrue(coordinatorSource.contains("applyCommandState(rendererStopCommandState())"))
         assertTrue(listenerSource.contains("PlaybackDiagnosticsStatus.FAILED"))
-        assertTrue(listenerSource.contains("proxy.updatePlaybackError("))
+        assertTrue(listenerSource.contains("playbackState.updatePlaybackError("))
         assertTrue(listenerSource.contains("proxy.updateDlnaTransportState("))
         assertTrue(listenerSource.contains("class RendererServicePlayerListener("))
     }
@@ -79,7 +79,7 @@ class MainActivityLoggingTest {
         assertTrue(recoverySource.contains("REBUILD_SESSION"))
         assertTrue(listenerSource.contains("proxy.recoverActivePlaybackSession("))
         assertTrue(listenerSource.contains("player.clearMediaItems()"))
-        assertTrue(servicePlaybackSource.contains("proxy().clearActivePlaybackSession()"))
+        assertTrue(servicePlaybackSource.contains("playbackState().clearActivePlaybackSession()"))
         assertTrue(servicePlaybackSource.contains("applyCommandState(rendererPlayCommandState())"))
         assertTrue(listenerSource.contains("player.setMediaItem("))
     }
@@ -91,7 +91,7 @@ class MainActivityLoggingTest {
             Charsets.UTF_8,
         )
 
-        assertTrue(listenerSource.contains("proxy.clearActivePlaybackSession()"))
+        assertTrue(listenerSource.contains("playbackState.clearActivePlaybackSession()"))
         assertTrue(listenerSource.contains("PlaybackDiagnosticsStatus.FAILED"))
         assertTrue(listenerSource.contains("transportStatus = \"ERROR_OCCURRED\""))
     }

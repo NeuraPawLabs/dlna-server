@@ -2,10 +2,8 @@ package labs.newrapaw.dlna.probe.proxy
 
 import java.io.Closeable
 import java.util.concurrent.ExecutorService
-import java.util.concurrent.LinkedBlockingQueue
-import java.util.concurrent.ThreadPoolExecutor
-import java.util.concurrent.TimeUnit
 import labs.newrapaw.dlna.probe.core.CoreLocalHlsProxy
+import labs.newrapaw.dlna.probe.core.boundedExecutor
 
 internal class LocalHlsProxyHost(
     private val coreProxy: CoreLocalHlsProxy,
@@ -50,25 +48,5 @@ internal class LocalHlsProxyHost(
     private companion object {
         const val APP_PROXY_MAX_THREADS = 8
         const val APP_PROXY_QUEUE_CAPACITY = 64
-
-        fun boundedExecutor(
-            maxThreads: Int,
-            queueCapacity: Int,
-            callerRunsOnSaturation: Boolean = false,
-        ): ThreadPoolExecutor =
-            ThreadPoolExecutor(
-                maxThreads,
-                maxThreads,
-                60L,
-                TimeUnit.SECONDS,
-                LinkedBlockingQueue(queueCapacity),
-                if (callerRunsOnSaturation) {
-                    ThreadPoolExecutor.CallerRunsPolicy()
-                } else {
-                    ThreadPoolExecutor.AbortPolicy()
-                },
-            ).apply {
-                allowCoreThreadTimeOut(true)
-            }
     }
 }

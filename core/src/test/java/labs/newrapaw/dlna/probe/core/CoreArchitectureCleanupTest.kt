@@ -60,6 +60,29 @@ class CoreArchitectureCleanupTest {
     }
 
     @Test
+    fun coreLocalHlsProxyUsesSharedRequestFailurePolicy() {
+        val proxySource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/CoreLocalHlsProxy.kt")
+        val supportSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/CoreLocalHlsProxySupport.kt")
+
+        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/CoreLocalHlsProxySupport.kt").any(Files::exists))
+        assertFalse(proxySource.contains("private fun shouldSuppressRequestFailureLog("))
+        assertTrue(proxySource.contains("shouldSuppressRequestFailureLog = ::shouldSuppressRequestFailureLog"))
+        assertTrue(supportSource.contains("fun shouldSuppressRequestFailureLog("))
+    }
+
+    @Test
+    fun coreLocalHlsProxyComponentsUseSharedBoundedExecutorHelper() {
+        val componentsSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/CoreLocalHlsProxyComponents.kt")
+        val supportSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/CoreLocalHlsProxySupport.kt")
+
+        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/CoreLocalHlsProxySupport.kt").any(Files::exists))
+        assertFalse(componentsSource.contains("fun boundedExecutor("))
+        assertTrue(componentsSource.contains("boundedExecutor("))
+        assertTrue(supportSource.contains("fun boundedExecutor("))
+        assertTrue(supportSource.contains("callerRunsOnSaturation"))
+    }
+
+    @Test
     fun coreLocalHlsProxyDelegatesUpstreamRequestExecution() {
         val source = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/CoreLocalHlsProxy.kt")
         val componentsSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/CoreLocalHlsProxyComponents.kt")
@@ -389,204 +412,82 @@ class CoreArchitectureCleanupTest {
     }
 
     @Test
-    fun playbackDiagnosticsStateDelegatesSnapshotModels() {
+    fun playbackDiagnosticsUseConsolidatedFileLayout() {
+        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnostics.kt").any(Files::exists))
+        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsModels.kt").any(Files::exists))
+        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsRules.kt").any(Files::exists))
+        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsTrackers.kt").any(Files::exists))
+        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsJson.kt").any(Files::exists))
+
+        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsJsonSections.kt").none(Files::exists))
+        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsSegmentSnapshotUpdater.kt").none(Files::exists))
+        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsSegmentTracker.kt").none(Files::exists))
+        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsSegmentWindow.kt").none(Files::exists))
+        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsSessionSnapshotUpdater.kt").none(Files::exists))
+        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsSessionTracker.kt").none(Files::exists))
+        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsSnapshotRuntime.kt").none(Files::exists))
+        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsSnapshotRuntimeState.kt").none(Files::exists))
+        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsSnapshotUpdater.kt").none(Files::exists))
+    }
+
+    @Test
+    fun playbackDiagnosticsStateCoLocatesUpdaterHelpers() {
         val stateSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnostics.kt")
+
+        assertTrue(stateSource.contains("class PlaybackDiagnosticsState("))
+        assertTrue(stateSource.contains("internal class PlaybackDiagnosticsSnapshotUpdater("))
+        assertTrue(stateSource.contains("internal class PlaybackDiagnosticsSegmentSnapshotUpdater("))
+        assertTrue(stateSource.contains("internal class PlaybackDiagnosticsSessionSnapshotUpdater("))
+        assertTrue(stateSource.contains("private fun isRecoverablePlaybackErrorMessage(message: String): Boolean ="))
+        assertTrue(stateSource.contains("private fun PlaybackDiagnosticsStatus.clearsRecoverablePlaybackError(): Boolean ="))
+        assertTrue(stateSource.contains("private fun isIgnoredSegmentFailureReason(reason: String?): Boolean"))
+    }
+
+    @Test
+    fun playbackDiagnosticsModelsCoLocateRuntimeState() {
         val modelsSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsModels.kt")
 
-        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsModels.kt").any(Files::exists))
-        assertFalse(stateSource.contains("enum class DiagnosticsSeverity"))
-        assertFalse(stateSource.contains("enum class SlotDiagnosticsState"))
-        assertFalse(stateSource.contains("data class SegmentSample("))
-        assertFalse(stateSource.contains("data class SlotDiagnosticsItem("))
-        assertFalse(stateSource.contains("data class AssetDiagnosticsItem("))
-        assertFalse(stateSource.contains("data class DiagnosticsInsight("))
-        assertFalse(stateSource.contains("data class PlaybackDiagnosticsSnapshot("))
         assertTrue(modelsSource.contains("enum class DiagnosticsSeverity"))
         assertTrue(modelsSource.contains("data class PlaybackDiagnosticsSnapshot("))
-        assertTrue(stateSource.contains("class PlaybackDiagnosticsState("))
+        assertTrue(modelsSource.contains("internal data class PlaybackDiagnosticsSnapshotRuntimeState("))
     }
 
     @Test
-    fun playbackDiagnosticsStateDelegatesSegmentWindowTracking() {
-        val stateSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnostics.kt")
-        val trackerSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsSegmentTracker.kt")
-        val updaterSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsSegmentSnapshotUpdater.kt")
+    fun playbackDiagnosticsSnapshotEmptyUsesModelDefaults() {
+        val modelsSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsModels.kt")
 
-        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsSegmentTracker.kt").any(Files::exists))
-        assertFalse(stateSource.contains("private val recentSamples = ArrayDeque<SegmentSample>()"))
-        assertFalse(stateSource.contains("if (recentSamples.size >= sampleLimit) recentSamples.removeFirst()"))
-        assertFalse(stateSource.contains("val lastFive = nextSamples.takeLast(5)"))
-        assertFalse(stateSource.contains("val directAverage = nextSamples.filter"))
-        assertFalse(stateSource.contains("val proxyAverage = nextSamples.filter"))
-        assertTrue(stateSource.contains("private val segmentTracker = PlaybackDiagnosticsSegmentTracker("))
-        assertTrue(stateSource.contains("private val segmentSnapshotUpdater = PlaybackDiagnosticsSegmentSnapshotUpdater("))
-        assertTrue(updaterSource.contains("segmentTracker.recordResult("))
-        assertTrue(trackerSource.contains("internal class PlaybackDiagnosticsSegmentTracker("))
+        assertTrue(modelsSource.contains("fun empty(): PlaybackDiagnosticsSnapshot = PlaybackDiagnosticsSnapshot("))
+        assertTrue(modelsSource.contains("playbackStatus = PlaybackDiagnosticsStatus.IDLE"))
+        assertTrue(modelsSource.contains("upstreamMode = UpstreamMode.PROXY_ONLY"))
+        assertTrue(modelsSource.contains("prefetchConcurrency = ProxySettingsState.DEFAULT_PREFETCH_CONCURRENCY"))
+        assertFalse(modelsSource.contains("sessionStatus = null"))
+        assertFalse(modelsSource.contains("recentSegmentSamples = emptyList()"))
+        assertFalse(modelsSource.contains("continuousReadySlotCount = 0"))
+        assertFalse(modelsSource.contains("severity = DiagnosticsSeverity.OK"))
+        assertFalse(modelsSource.contains("lastFallbackReason = null"))
     }
 
     @Test
-    fun playbackDiagnosticsSegmentTrackerUsesWindowStateModel() {
-        val trackerSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsSegmentTracker.kt")
-        val windowSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsSegmentWindow.kt")
+    fun playbackDiagnosticsTrackersCoLocateRuntimeAndTrackerHelpers() {
+        val trackersSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsTrackers.kt")
 
-        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsSegmentWindow.kt").any(Files::exists))
-        assertFalse(trackerSource.contains("private val recentSamples = ArrayDeque<SegmentSample>()"))
-        assertTrue(trackerSource.contains("private var window = PlaybackDiagnosticsSegmentWindow.empty("))
-        assertTrue(trackerSource.contains("window = window.record("))
-        assertTrue(windowSource.contains("data class PlaybackDiagnosticsSegmentWindow("))
-        assertTrue(windowSource.contains("fun record("))
+        assertTrue(trackersSource.contains("internal data class PlaybackDiagnosticsSegmentStats("))
+        assertTrue(trackersSource.contains("internal class PlaybackDiagnosticsSegmentTracker("))
+        assertTrue(trackersSource.contains("internal data class PlaybackDiagnosticsSegmentWindow("))
+        assertTrue(trackersSource.contains("internal class PlaybackDiagnosticsSessionTracker"))
+        assertTrue(trackersSource.contains("internal class PlaybackDiagnosticsSnapshotRuntime("))
     }
 
     @Test
-    fun playbackDiagnosticsStateDelegatesSegmentSnapshotWrites() {
-        val stateSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnostics.kt")
-        val helperSourcePath = "src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsSegmentSnapshotUpdater.kt"
-
-        assertTrue(sourcePaths(helperSourcePath).any(Files::exists))
-        assertTrue(stateSource.contains("private val segmentSnapshotUpdater = PlaybackDiagnosticsSegmentSnapshotUpdater("))
-        assertFalse(stateSource.contains("snapshotRuntime.current().copy(lastRequestedSegment = url)"))
-        assertFalse(stateSource.contains("if (!success && isIgnoredSegmentFailureReason(fallbackReason))"))
-        assertFalse(stateSource.contains("lastSucceededSegment = if (success) url else snapshot.lastSucceededSegment"))
-        assertFalse(stateSource.contains("lastFailedSegment = if (success) snapshot.lastFailedSegment else url"))
-        assertFalse(stateSource.contains("lastFallbackReason = fallbackReason ?: snapshot.lastFallbackReason"))
-        assertFalse(stateSource.contains("lastError = if (success) snapshot.lastError else fallbackReason ?: \"segment fetch failed\""))
-        assertFalse(stateSource.contains("private fun isIgnoredSegmentFailureReason(reason: String?): Boolean"))
-        val helperSource = sourceText(helperSourcePath)
-        assertTrue(helperSource.contains("internal class PlaybackDiagnosticsSegmentSnapshotUpdater("))
-        assertTrue(helperSource.contains("fun onSegmentRequested(url: String)"))
-        assertTrue(helperSource.contains("fun onSegmentResult("))
-        assertTrue(helperSource.contains("private fun isIgnoredSegmentFailureReason(reason: String?): Boolean"))
-    }
-
-    @Test
-    fun playbackDiagnosticsStateDelegatesSessionSnapshotUpdates() {
-        val stateSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnostics.kt")
-        val trackerSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsSessionTracker.kt")
-        val updaterSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsSessionSnapshotUpdater.kt")
-
-        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsSessionTracker.kt").any(Files::exists))
-        assertFalse(stateSource.contains("startupGatePhase = phase"))
-        assertFalse(stateSource.contains("slotStates = slotStates.sortedBy { it.slotIndex }"))
-        assertFalse(stateSource.contains("assetDiagnostics = assetDiagnostics.sortedWith(compareBy<AssetDiagnosticsItem> { it.kind.name }.thenBy { it.assetId })"))
-        assertFalse(stateSource.contains("currentLoadingAssetId = assetId"))
-        assertTrue(stateSource.contains("private val sessionTracker = PlaybackDiagnosticsSessionTracker()"))
-        assertTrue(stateSource.contains("private val sessionSnapshotUpdater = PlaybackDiagnosticsSessionSnapshotUpdater("))
-        assertTrue(updaterSource.contains("sessionTracker.updateStartupGate("))
-        assertTrue(updaterSource.contains("sessionTracker.updateSlotDiagnostics("))
-        assertTrue(updaterSource.contains("sessionTracker.updateAssetDiagnostics("))
-        assertTrue(updaterSource.contains("sessionTracker.updateCurrentLoadingAsset("))
-        assertTrue(trackerSource.contains("internal class PlaybackDiagnosticsSessionTracker"))
-    }
-
-    @Test
-    fun playbackDiagnosticsStateDelegatesSessionSnapshotWrites() {
-        val stateSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnostics.kt")
-        val helperSourcePath = "src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsSessionSnapshotUpdater.kt"
-
-        assertTrue(sourcePaths(helperSourcePath).any(Files::exists))
-        assertTrue(stateSource.contains("private val sessionSnapshotUpdater = PlaybackDiagnosticsSessionSnapshotUpdater("))
-        assertFalse(stateSource.contains("snapshotRuntime.touch("))
-        assertFalse(stateSource.contains("allowDerivedThrottle = false"))
-        val helperSource = sourceText(helperSourcePath)
-        assertTrue(helperSource.contains("internal class PlaybackDiagnosticsSessionSnapshotUpdater("))
-        assertTrue(helperSource.contains("fun updateStartupGate("))
-        assertTrue(helperSource.contains("fun updateSlotDiagnostics("))
-        assertTrue(helperSource.contains("fun updateAssetDiagnostics("))
-        assertTrue(helperSource.contains("fun updateAssetSummary("))
-        assertTrue(helperSource.contains("fun clearSlotDiagnostics("))
-        assertTrue(helperSource.contains("fun updateCurrentLoadingAsset("))
-        assertTrue(helperSource.contains("fun clearPreparedSessionDiagnostics("))
-        assertTrue(helperSource.contains("sessionTracker.updateStartupGate("))
-        assertTrue(helperSource.contains("sessionTracker.clearPreparedSessionDiagnostics("))
-    }
-
-    @Test
-    fun playbackDiagnosticsStateDelegatesSnapshotCacheLifecycle() {
-        val stateSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnostics.kt")
-        val runtimeSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsSnapshotRuntime.kt")
-
-        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsSnapshotRuntime.kt").any(Files::exists))
-        assertFalse(stateSource.contains("private var cachedSnapshot: PlaybackDiagnosticsSnapshot? = null"))
-        assertFalse(stateSource.contains("private var cachedSnapshotVersion = -1L"))
-        assertFalse(stateSource.contains("private var snapshotDirty = true"))
-        assertFalse(stateSource.contains("private var snapshotVersion = 0L"))
-        assertFalse(stateSource.contains("private var lastDerivedAtMs: Long? = null"))
-        assertFalse(stateSource.contains("private var canThrottleDerivedSnapshot = false"))
-        assertFalse(stateSource.contains("private val staleThresholdMs = 5_000L"))
-        assertFalse(stateSource.contains("private fun touch("))
-        assertFalse(stateSource.contains("private fun setRawSnapshot("))
-        assertFalse(stateSource.contains("private fun shouldThrottleDerivedSnapshot("))
-        assertFalse(stateSource.contains("private fun cachedSnapshotForCurrentState("))
-        assertTrue(stateSource.contains("private val snapshotRuntime = PlaybackDiagnosticsSnapshotRuntime("))
-        assertTrue(runtimeSource.contains("internal class PlaybackDiagnosticsSnapshotRuntime("))
-        assertTrue(runtimeSource.contains("private var state = PlaybackDiagnosticsSnapshotRuntimeState()"))
-        assertTrue(runtimeSource.contains("fun current(): PlaybackDiagnosticsSnapshot"))
-        assertTrue(runtimeSource.contains("fun playerIsLoading(): Boolean?"))
-        assertTrue(runtimeSource.contains("fun reset("))
-        assertTrue(runtimeSource.contains("fun touch("))
-        assertTrue(runtimeSource.contains("fun snapshot(): PlaybackDiagnosticsSnapshot"))
-    }
-
-    @Test
-    fun playbackDiagnosticsSnapshotRuntimeUsesSingleStateModel() {
-        val runtimeSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsSnapshotRuntime.kt")
-        val stateSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsSnapshotRuntimeState.kt")
-
-        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsSnapshotRuntimeState.kt").any(Files::exists))
-        assertFalse(runtimeSource.contains("private var snapshot = PlaybackDiagnosticsSnapshot.empty()"))
-        assertFalse(runtimeSource.contains("private var cachedSnapshot: PlaybackDiagnosticsSnapshot? = null"))
-        assertFalse(runtimeSource.contains("private var cachedSnapshotVersion = -1L"))
-        assertFalse(runtimeSource.contains("private var snapshotDirty = true"))
-        assertFalse(runtimeSource.contains("private var snapshotVersion = 0L"))
-        assertFalse(runtimeSource.contains("private var lastDerivedAtMs: Long? = null"))
-        assertFalse(runtimeSource.contains("private var canThrottleDerivedSnapshot = false"))
-        assertTrue(runtimeSource.contains("private var state = PlaybackDiagnosticsSnapshotRuntimeState()"))
-        assertTrue(stateSource.contains("internal data class PlaybackDiagnosticsSnapshotRuntimeState("))
-    }
-
-    @Test
-    fun playbackDiagnosticsStateDelegatesBasicSnapshotWrites() {
-        val stateSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnostics.kt")
-        val helperSourcePath = "src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsSnapshotUpdater.kt"
-
-        assertTrue(sourcePaths(helperSourcePath).any(Files::exists))
-        assertTrue(stateSource.contains("private val snapshotUpdater = PlaybackDiagnosticsSnapshotUpdater("))
-        assertFalse(stateSource.contains("segmentTracker.reset()"))
-        assertFalse(stateSource.contains("val currentTimeMs = nowMs()"))
-        assertFalse(stateSource.contains("snapshot.lastError?.takeUnless(::isRecoverablePlaybackErrorMessage)"))
-        assertFalse(stateSource.contains("message.isNullOrBlank() -> snapshot.playbackStatus"))
-        assertFalse(stateSource.contains("activeProxy = settings.selectedProxy()?.displayUrl()"))
-        assertFalse(stateSource.contains("playerPositionMs = positionMs"))
-        assertFalse(stateSource.contains("pendingPrefetchCount = pendingPrefetchCount"))
-        assertFalse(stateSource.contains("private fun isRecoverablePlaybackErrorMessage(message: String): Boolean ="))
-        assertFalse(stateSource.contains("private fun PlaybackDiagnosticsStatus.clearsRecoverablePlaybackError(): Boolean ="))
-        val helperSource = sourceText(helperSourcePath)
-        assertTrue(helperSource.contains("internal class PlaybackDiagnosticsSnapshotUpdater("))
-        assertTrue(helperSource.contains("fun resetForPlayback("))
-        assertTrue(helperSource.contains("fun setPlaybackStatus("))
-        assertTrue(helperSource.contains("fun setSessionStatus("))
-        assertTrue(helperSource.contains("fun setLastError("))
-        assertTrue(helperSource.contains("fun setUpstreamSettings("))
-        assertTrue(helperSource.contains("fun updatePrefetchStats("))
-        assertTrue(helperSource.contains("fun updatePlayerTelemetry("))
-    }
-
-    @Test
-    fun playbackDiagnosticsJsonDelegatesNestedSectionBuilders() {
+    fun playbackDiagnosticsJsonCoLocatesSectionBuilders() {
         val jsonSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsJson.kt")
-        val helperSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsJsonSections.kt")
 
-        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/PlaybackDiagnosticsJsonSections.kt").any(Files::exists))
-        assertFalse(jsonSource.contains("appendJsonField(\"recentSegmentSamples\", buildJsonArray(snapshot.recentSegmentSamples)"))
-        assertFalse(jsonSource.contains("appendJsonField(\"slotStates\", buildJsonArray(snapshot.slotStates)"))
-        assertFalse(jsonSource.contains("appendJsonField(\"assetDiagnostics\", buildJsonArray(snapshot.assetDiagnostics)"))
-        assertFalse(jsonSource.contains("appendJsonField(\"insights\", buildJsonArray(snapshot.insights)"))
-        assertFalse(jsonSource.contains("appendJsonField(\"primaryBottleneck\", snapshot.primaryBottleneck?.let"))
-        assertTrue(helperSource.contains("internal fun buildRecentSegmentSamplesJson("))
-        assertTrue(helperSource.contains("internal fun buildSlotStatesJson("))
-        assertTrue(helperSource.contains("internal fun buildAssetDiagnosticsJson("))
-        assertTrue(helperSource.contains("internal fun buildInsightsJson("))
-        assertTrue(helperSource.contains("internal fun buildPrimaryBottleneckJson("))
+        assertTrue(jsonSource.contains("fun buildPlaybackDiagnosticsJson(snapshot: PlaybackDiagnosticsSnapshot): String"))
+        assertTrue(jsonSource.contains("internal fun buildRecentSegmentSamplesJson("))
+        assertTrue(jsonSource.contains("internal fun buildSlotStatesJson("))
+        assertTrue(jsonSource.contains("internal fun buildAssetDiagnosticsJson("))
+        assertTrue(jsonSource.contains("internal fun buildInsightsJson("))
+        assertTrue(jsonSource.contains("internal fun buildPrimaryBottleneckJson("))
     }
 
     @Test
@@ -605,10 +506,14 @@ class CoreArchitectureCleanupTest {
     @Test
     fun coreComponentsUseBoundedExecutorsInsteadOfCachedPools() {
         val source = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/CoreLocalHlsProxyComponents.kt")
+        val supportSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/CoreLocalHlsProxySupport.kt")
 
         assertFalse(source.contains("Executors.newCachedThreadPool()"))
-        assertTrue(source.contains("ThreadPoolExecutor("))
-        assertTrue(source.contains("LinkedBlockingQueue"))
+        assertFalse(source.contains("ThreadPoolExecutor("))
+        assertFalse(source.contains("LinkedBlockingQueue"))
+        assertTrue(source.contains("boundedExecutor("))
+        assertTrue(supportSource.contains("ThreadPoolExecutor("))
+        assertTrue(supportSource.contains("LinkedBlockingQueue"))
     }
 
     @Test
@@ -662,48 +567,42 @@ class CoreArchitectureCleanupTest {
     @Test
     fun sessionAssetStoreDelegatesSessionStateTracking() {
         val storeSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/session/SessionAssetStore.kt")
-        val trackerSourcePath = "src/main/java/labs/newrapaw/dlna/probe/core/session/SessionAssetStoreStateTracker.kt"
-        val stateSourcePath = "src/main/java/labs/newrapaw/dlna/probe/core/session/SessionAssetStoreTrackerState.kt"
-
-        assertTrue(sourcePaths(trackerSourcePath).any(Files::exists))
-        assertTrue(sourcePaths(stateSourcePath).any(Files::exists))
-        assertFalse(storeSource.contains("private val lock = Any()"))
-        assertFalse(storeSource.contains("private val sessionStates = mutableMapOf<String, SessionState>()"))
-        assertFalse(storeSource.contains("private val closedSessionIds = linkedSetOf<String>()"))
-        assertFalse(storeSource.contains("private fun sessionState("))
-        assertFalse(storeSource.contains("private fun sessionStateOrNull("))
-        assertFalse(storeSource.contains("private fun rememberClosedSessionLocked("))
-        assertFalse(storeSource.contains("private class SessionState"))
+        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/session/SessionAssetStoreStateTracker.kt").none(Files::exists))
+        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/session/SessionAssetStoreTrackerState.kt").none(Files::exists))
         assertTrue(storeSource.contains("private val stateTracker = SessionAssetStoreStateTracker("))
-        val trackerSource = sourceText(trackerSourcePath)
-        val stateSource = sourceText(stateSourcePath)
-        assertTrue(trackerSource.contains("internal class SessionAssetStoreStateTracker("))
-        assertTrue(trackerSource.contains("private var state = SessionAssetStoreTrackerState()"))
-        assertTrue(trackerSource.contains("fun writableSessionState("))
-        assertTrue(trackerSource.contains("fun activeSessionStateOrNull("))
-        assertTrue(trackerSource.contains("fun closeSession("))
-        assertTrue(trackerSource.contains("fun closeAllSessions("))
-        assertTrue(stateSource.contains("data class SessionAssetStoreTrackerState("))
-        assertTrue(stateSource.contains("fun withTrackedSession("))
-        assertTrue(stateSource.contains("fun withClosedSession("))
+        assertTrue(storeSource.contains("internal class SessionAssetStoreStateTracker("))
+        assertTrue(storeSource.contains("private var state = SessionAssetStoreTrackerState()"))
+        assertTrue(storeSource.contains("fun writableSessionState("))
+        assertTrue(storeSource.contains("fun activeSessionStateOrNull("))
+        assertTrue(storeSource.contains("fun closeSession("))
+        assertTrue(storeSource.contains("fun closeAllSessions("))
+        assertTrue(storeSource.contains("internal data class SessionAssetStoreTrackerState("))
+        assertTrue(storeSource.contains("fun withTrackedSession("))
+        assertTrue(storeSource.contains("fun withClosedSession("))
     }
 
     @Test
     fun sessionAssetStoreDelegatesDeletionPlanning() {
         val storeSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/session/SessionAssetStore.kt")
-        val cleanupSourcePath = "src/main/java/labs/newrapaw/dlna/probe/core/session/SessionAssetStoreCleanup.kt"
-
-        assertTrue(sourcePaths(cleanupSourcePath).any(Files::exists))
-        assertFalse(storeSource.contains("rootDir.resolve(sessionId).deleteRecursively()"))
-        assertFalse(storeSource.contains("trackedSessionIds.forEach { sessionId ->"))
+        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/session/SessionAssetStoreCleanup.kt").none(Files::exists))
         assertTrue(storeSource.contains("private val cleanup = SessionAssetStoreCleanup("))
         assertTrue(storeSource.contains("cleanup.deleteClosedSession(sessionId)"))
         assertTrue(storeSource.contains("cleanup.deleteClosedSessions("))
-        val cleanupSource = sourceText(cleanupSourcePath)
-        assertTrue(cleanupSource.contains("internal class SessionAssetStoreCleanup("))
-        assertTrue(cleanupSource.contains("fun deleteClosedSession(sessionId: String)"))
-        assertTrue(cleanupSource.contains("fun deleteClosedSessions(sessionIds: Set<String>)"))
-        assertTrue(cleanupSource.contains("rootDir.resolve(sessionId).deleteRecursively()"))
+        assertTrue(storeSource.contains("internal class SessionAssetStoreCleanup("))
+        assertTrue(storeSource.contains("fun deleteClosedSession(sessionId: String)"))
+        assertTrue(storeSource.contains("fun deleteClosedSessions(sessionIds: Set<String>)"))
+        assertTrue(storeSource.contains("rootDir.resolve(sessionId).deleteRecursively()"))
+    }
+
+    @Test
+    fun sessionTimelineCoLocatesPlaybackTelemetryHelpers() {
+        val timelineSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/core/session/SessionTimeline.kt")
+
+        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/session/PlaybackTelemetryBridge.kt").none(Files::exists))
+        assertTrue(timelineSource.contains("data class SessionTimeline("))
+        assertTrue(timelineSource.contains("data class PlaybackTelemetrySnapshot("))
+        assertTrue(timelineSource.contains("class PlaybackTelemetryBridge("))
+        assertTrue(timelineSource.contains("fun snapshot("))
     }
 
     private fun sourceText(path: String): String =

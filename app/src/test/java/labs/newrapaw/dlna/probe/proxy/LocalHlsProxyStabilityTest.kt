@@ -19,8 +19,10 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
+import labs.newrapaw.dlna.probe.core.boundedExecutor
 import labs.newrapaw.dlna.probe.core.InMemoryProxySettingsStore
 import labs.newrapaw.dlna.probe.core.ProxySettingsState
+import labs.newrapaw.dlna.probe.core.shouldSuppressRequestFailureLog
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -56,7 +58,7 @@ class LocalHlsProxyStabilityTest {
 
         proxy.start()
         try {
-            val suppressed = shouldSuppressProxyRequestFailureLog(SocketException("Broken pipe"))
+            val suppressed = shouldSuppressRequestFailureLog(SocketException("Broken pipe"))
 
             assertTrue(suppressed)
             assertTrue(logs.none { it.contains("Broken pipe") })
@@ -72,7 +74,7 @@ class LocalHlsProxyStabilityTest {
 
         proxy.start()
         try {
-            val suppressed = shouldSuppressProxyRequestFailureLog(SocketException("Connection reset by peer"))
+            val suppressed = shouldSuppressRequestFailureLog(SocketException("Connection reset by peer"))
 
             assertTrue(suppressed)
             assertTrue(logs.none { it.contains("Connection reset by peer") })
@@ -1630,21 +1632,9 @@ class LocalHlsProxyStabilityTest {
     private fun productionProxyExecutor(
         maxThreads: Int,
         queueCapacity: Int,
-    ): ThreadPoolExecutor {
-        val companionField = LocalHlsProxyHost::class.java.getDeclaredField("Companion")
-        companionField.isAccessible = true
-        val companion = companionField.get(null)
-        val method = companion.javaClass.getDeclaredMethod(
-            "boundedExecutor\$default",
-            companion.javaClass,
-            Int::class.javaPrimitiveType,
-            Int::class.javaPrimitiveType,
-            Boolean::class.javaPrimitiveType,
-            Int::class.javaPrimitiveType,
-            Any::class.java,
+    ): ThreadPoolExecutor =
+        boundedExecutor(
+            maxThreads = maxThreads,
+            queueCapacity = queueCapacity,
         )
-        method.isAccessible = true
-        @Suppress("UNCHECKED_CAST")
-        return method.invoke(companion, companion, maxThreads, queueCapacity, false, 4, null) as ThreadPoolExecutor
-    }
 }

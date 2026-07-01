@@ -67,16 +67,13 @@ class PlaybackSessionManagerTest {
             Files.readAllBytes(Paths.get("src/main/java/labs/newrapaw/dlna/probe/core/session/PlaybackSessionManager.kt")),
             Charsets.UTF_8,
         )
-        val stateSource = String(
-            Files.readAllBytes(Paths.get("src/main/java/labs/newrapaw/dlna/probe/core/session/PlaybackSessionManagerState.kt")),
-            Charsets.UTF_8,
-        )
 
         assertFalse(source.contains("private var active: PlaybackSession? = null"))
         assertFalse(source.contains("private val closed = ArrayDeque<PlaybackSession>()"))
         assertTrue(source.contains("private var state = PlaybackSessionManagerState()"))
-        assertTrue(stateSource.contains("data class PlaybackSessionManagerState("))
-        assertTrue(stateSource.contains("fun withStartedSession("))
+        assertFalse(Files.exists(Paths.get("src/main/java/labs/newrapaw/dlna/probe/core/session/PlaybackSessionManagerState.kt")))
+        assertTrue(source.contains("internal data class PlaybackSessionManagerState("))
+        assertTrue(source.contains("fun withStartedSession("))
     }
 
     @Test

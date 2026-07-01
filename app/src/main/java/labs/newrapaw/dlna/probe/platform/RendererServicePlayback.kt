@@ -11,6 +11,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicReference
 import labs.newrapaw.dlna.probe.core.PlaybackDiagnosticsStatus
 import labs.newrapaw.dlna.probe.proxy.LocalHlsProxy
+import labs.newrapaw.dlna.probe.proxy.LocalHlsProxyPlaybackStateBridge
 
 @UnstableApi
 fun buildRendererServicePlayer(context: Context): ExoPlayer =
@@ -27,9 +28,10 @@ fun buildRendererServicePlayer(context: Context): ExoPlayer =
         )
         .build()
 
-class RendererServicePlayerController(
+internal class RendererServicePlayerController(
     private val player: ExoPlayer,
     private val proxyProvider: () -> LocalHlsProxy,
+    private val playbackStateProvider: () -> LocalHlsProxyPlaybackStateBridge,
     private val appendLog: (String) -> Unit,
     private val recoveryState: RendererServicePlayerRecoveryState,
     private val handler: Handler = Handler(Looper.getMainLooper()),
@@ -59,7 +61,7 @@ class RendererServicePlayerController(
             applyCommandState(rendererStopCommandState())
             player.stop()
             player.clearMediaItems()
-            proxy().clearActivePlaybackSession()
+            playbackState().clearActivePlaybackSession()
             appendLog("Stopped")
         }
     }
@@ -95,7 +97,7 @@ class RendererServicePlayerController(
     ) {
         runOnPlayerThread("network recovery") {
             recoveryState.clear()
-            proxy().updatePlaybackStatus(PlaybackDiagnosticsStatus.BUFFERING)
+            playbackState().updatePlaybackStatus(PlaybackDiagnosticsStatus.BUFFERING)
             player.stop()
             player.clearMediaItems()
             player.setMediaItem(MediaItem.fromUri(recoveredManifestUrl))
@@ -156,12 +158,12 @@ class RendererServicePlayerController(
     }
 
     private fun applyCommandState(update: RendererCommandStateUpdate) {
-        proxy().updatePlaybackStatus(update.diagnosticsStatus)
+        playbackState().updatePlaybackStatus(update.diagnosticsStatus)
         proxy().updateDlnaTransportState(
             transportState = update.dlnaTransportState,
             positionMs = update.resetPositionMs,
         )
-        proxy().updatePlayerTelemetry(
+        playbackState().updatePlayerTelemetry(
             positionMs = update.resetPositionMs,
             bufferedPositionMs = update.resetPositionMs,
             isLoading = update.isLoading,
@@ -169,4 +171,6 @@ class RendererServicePlayerController(
     }
 
     private fun proxy(): LocalHlsProxy = proxyProvider()
+
+    private fun playbackState(): LocalHlsProxyPlaybackStateBridge = playbackStateProvider()
 }

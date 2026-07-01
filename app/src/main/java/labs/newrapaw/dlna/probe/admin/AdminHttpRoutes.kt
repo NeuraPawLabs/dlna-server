@@ -2,13 +2,13 @@ package labs.newrapaw.dlna.probe.admin
 
 import java.io.OutputStream
 import labs.newrapaw.dlna.probe.core.ActiveSessionInfo
+import labs.newrapaw.dlna.probe.core.PlaybackDiagnosticsStatus
 import labs.newrapaw.dlna.probe.core.PlaybackDiagnosticsSnapshot
 import labs.newrapaw.dlna.probe.core.ProxySettingsState
 import labs.newrapaw.dlna.probe.core.ProxySettingsStore
 import labs.newrapaw.dlna.probe.core.UpstreamMode
 import labs.newrapaw.dlna.probe.core.buildPlaybackDiagnosticsJson
 import labs.newrapaw.dlna.probe.core.parseProxyConfig
-import labs.newrapaw.dlna.probe.proxy.PlaybackDiagnosticsStatus
 import labs.newrapaw.dlna.probe.proxy.writeJson
 import labs.newrapaw.dlna.probe.proxy.writeText
 

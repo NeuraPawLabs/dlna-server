@@ -41,11 +41,17 @@ class ArchitectureCleanupTest {
     fun localHlsProxyUsesBoundedExecutorForAppSideWork() {
         val proxySource = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxy.kt")
         val hostSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyHost.kt")
+        val notifierSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyEventNotifier.kt")
+        val supportSource = coreSourceText("src/main/java/labs/newrapaw/dlna/probe/core/CoreLocalHlsProxySupport.kt")
 
         assertFalse(proxySource.contains("private val executor: ExecutorService = boundedExecutor("))
         assertFalse(hostSource.contains("Executors.newCachedThreadPool()"))
-        assertTrue(hostSource.contains("ThreadPoolExecutor("))
-        assertTrue(hostSource.contains("LinkedBlockingQueue("))
+        assertFalse(hostSource.contains("fun boundedExecutor("))
+        assertFalse(notifierSource.contains("fun boundedExecutor("))
+        assertTrue(hostSource.contains("private val executor: ExecutorService = boundedExecutor("))
+        assertTrue(notifierSource.contains("private val executor: ExecutorService = boundedExecutor("))
+        assertTrue(supportSource.contains("fun boundedExecutor("))
+        assertTrue(supportSource.contains("callerRunsOnSaturation"))
     }
 
     @Test
@@ -230,12 +236,36 @@ class ArchitectureCleanupTest {
     }
 
     @Test
-    fun localHlsProxyUsesDedicatedRequestFailurePolicy() {
+    fun localHlsProxyUsesCoreRequestFailurePolicy() {
         val proxySource = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxy.kt")
+        val supportSource = coreSourceText("src/main/java/labs/newrapaw/dlna/probe/core/CoreLocalHlsProxySupport.kt")
 
-        assertTrue(proxySourcePaths("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyRequestFailurePolicy.kt").any(Files::exists))
+        assertTrue(coreSourcePaths("src/main/java/labs/newrapaw/dlna/probe/core/CoreLocalHlsProxySupport.kt").any(Files::exists))
+        assertTrue(proxySourcePaths("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyRequestFailurePolicy.kt").none(Files::exists))
         assertFalse(proxySource.contains("private fun shouldSuppressRequestFailureLog("))
-        assertTrue(proxySource.contains("shouldSuppressRequestFailureLog = ::shouldSuppressProxyRequestFailureLog"))
+        assertTrue(proxySource.contains("shouldSuppressRequestFailureLog = ::shouldSuppressRequestFailureLog"))
+        assertTrue(supportSource.contains("fun shouldSuppressRequestFailureLog("))
+    }
+
+    @Test
+    fun localHlsProxyExposesInternalPlaybackStateBridgeForAppCallers() {
+        val proxySource = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxy.kt")
+        val bridgeSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyPlaybackStateBridge.kt")
+        val servicePlaybackSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/platform/RendererServicePlayback.kt")
+        val listenerSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/platform/RendererServicePlayerListener.kt")
+        val coordinatorSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/ui/MainActivityPlaybackCoordinator.kt")
+
+        assertTrue(proxySourcePaths("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyPlaybackStateBridge.kt").any(Files::exists))
+        assertTrue(proxySource.contains("internal val playbackState = LocalHlsProxyPlaybackStateBridge("))
+        assertTrue(bridgeSource.contains("internal class LocalHlsProxyPlaybackStateBridge("))
+        assertTrue(bridgeSource.contains("fun activeSessionInfo(): ActiveSessionInfo?"))
+        assertTrue(bridgeSource.contains("fun updatePlaybackStatus(status: PlaybackDiagnosticsStatus)"))
+        assertTrue(bridgeSource.contains("fun clearActivePlaybackSession()"))
+        assertTrue(bridgeSource.contains("fun updatePlaybackError(message: String?)"))
+        assertTrue(bridgeSource.contains("fun updatePlayerTelemetry("))
+        assertTrue(servicePlaybackSource.contains("playbackState().clearActivePlaybackSession()"))
+        assertTrue(listenerSource.contains("playbackState.updatePlaybackStatus("))
+        assertTrue(coordinatorSource.contains("playbackStateProvider().clearActivePlaybackSession()"))
     }
 
     @Test
@@ -375,15 +405,10 @@ class ArchitectureCleanupTest {
     @Test
     fun appModuleMovesAdminControlPagesIntoDedicatedPackage() {
         assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPage.kt").any(Files::exists))
-        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageCommonScript.kt").any(Files::exists))
-        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageCache.kt").any(Files::exists))
-        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageCacheScript.kt").any(Files::exists))
+        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageSections.kt").any(Files::exists))
         assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageDiagnostics.kt").any(Files::exists))
-        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageLogs.kt").any(Files::exists))
-        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageLogsScript.kt").any(Files::exists))
-        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPagePlay.kt").any(Files::exists))
-        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageSettings.kt").any(Files::exists))
         assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageShell.kt").any(Files::exists))
+        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageScripts.kt").any(Files::exists))
         assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/ControlPage.kt").none(Files::exists))
         assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/ControlPageCache.kt").none(Files::exists))
         assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/ControlPageLogs.kt").none(Files::exists))
@@ -391,6 +416,16 @@ class ArchitectureCleanupTest {
         assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/ControlPageScripts.kt").none(Files::exists))
         assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/ControlPageSettings.kt").none(Files::exists))
         assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/ControlPageShell.kt").none(Files::exists))
+        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageCommonScript.kt").none(Files::exists))
+        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageCache.kt").none(Files::exists))
+        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageCacheScript.kt").none(Files::exists))
+        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageLogs.kt").none(Files::exists))
+        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageLogsScript.kt").none(Files::exists))
+        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPagePlay.kt").none(Files::exists))
+        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageSettings.kt").none(Files::exists))
+        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageShellStyle.kt").none(Files::exists))
+        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageDiagnosticsSlots.kt").none(Files::exists))
+        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageDiagnosticsStyle.kt").none(Files::exists))
     }
 
     @Test
@@ -411,62 +446,61 @@ class ArchitectureCleanupTest {
     }
 
     @Test
-    fun diagnosticsPanelDelegatesSlotHealthRendering() {
+    fun diagnosticsPanelCoLocatesSlotHealthRendering() {
         val source = sourceText("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageDiagnostics.kt")
 
-        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageDiagnosticsSlots.kt").any(Files::exists))
-        assertFalse(source.contains("private fun slotHealthGrid("))
-        assertFalse(source.contains("private fun selectedSlotDetail("))
-        assertFalse(source.contains("private fun slotHealthCss("))
-        assertFalse(source.contains("private fun slotHealthLabel("))
-        assertFalse(source.contains("private fun slotDependencySummary("))
-        assertFalse(source.contains("private fun slotDependencyLabel("))
-        assertFalse(source.contains("private fun slotAssetDiagnosticsTable("))
-        assertFalse(source.contains("private fun assetStateLabel("))
+        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageDiagnosticsSlots.kt").none(Files::exists))
+        assertTrue(source.contains("internal fun slotHealthGrid("))
+        assertTrue(source.contains("internal fun selectedSlotDetail("))
+        assertTrue(source.contains("private fun slotHealthCss("))
+        assertTrue(source.contains("private fun slotHealthLabel("))
+        assertTrue(source.contains("private fun slotDependencySummary("))
+        assertTrue(source.contains("private fun slotDependencyLabel("))
+        assertTrue(source.contains("private fun slotAssetDiagnosticsTable("))
+        assertTrue(source.contains("private fun assetStateLabel("))
     }
 
     @Test
-    fun adminShellDelegatesDiagnosticsStyles() {
-        val source = sourceText("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageShell.kt")
+    fun diagnosticsPageCoLocatesDiagnosticsStyles() {
+        val source = sourceText("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageDiagnostics.kt")
 
-        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageDiagnosticsStyle.kt").any(Files::exists))
-        assertFalse(source.contains(".diagnostics-summary {"))
-        assertFalse(source.contains(".segment-health-grid {"))
-        assertFalse(source.contains(".source-tag.direct {"))
-        assertFalse(source.contains(".reason-tag.failed {"))
-        assertFalse(source.contains(".result-error {"))
-        assertTrue(source.contains("\${buildAdminDiagnosticsStyles()}"))
+        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageDiagnosticsStyle.kt").none(Files::exists))
+        assertTrue(source.contains("internal fun buildAdminDiagnosticsStyles(): String"))
+        assertTrue(source.contains(".diagnostics-summary {"))
+        assertTrue(source.contains(".segment-health-grid {"))
+        assertTrue(source.contains(".source-tag.direct {"))
+        assertTrue(source.contains(".reason-tag.failed {"))
+        assertTrue(source.contains(".result-error {"))
     }
 
     @Test
-    fun adminShellDelegatesGenericPageStyles() {
+    fun adminShellCoLocatesGenericPageStyles() {
         val source = sourceText("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageShell.kt")
 
-        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageShellStyle.kt").any(Files::exists))
-        assertFalse(source.contains(":root {"))
-        assertFalse(source.contains(".shell { min-height: 100vh;"))
-        assertFalse(source.contains(".sidebar {"))
-        assertFalse(source.contains(".status-panel {"))
-        assertFalse(source.contains(".button-link,"))
-        assertFalse(source.contains(".log-console {"))
-        assertFalse(source.contains("@media (max-width: 900px) {"))
+        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageShellStyle.kt").none(Files::exists))
+        assertTrue(source.contains("internal fun buildAdminShellStyles(): String"))
+        assertTrue(source.contains(":root {"))
+        assertTrue(source.contains("grid-template-columns: 220px minmax(0, 1fr);"))
+        assertTrue(source.contains(".sidebar {"))
+        assertTrue(source.contains(".status-panel {"))
+        assertTrue(source.contains(".button-link,"))
+        assertTrue(source.contains(".log-console {"))
+        assertTrue(source.contains("@media (max-width: 900px) {"))
         assertTrue(source.contains("\${buildAdminShellStyles()}"))
     }
 
     @Test
-    fun adminScriptsAreSplitBySharedCacheAndLogsConcerns() {
-        val cacheScriptSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageCacheScript.kt")
-        val logsScriptSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageLogsScript.kt")
-        val commonScriptSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageCommonScript.kt")
+    fun adminScriptsUseConsolidatedPageScriptFile() {
+        val shellSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageShell.kt")
+        val scriptsSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageScripts.kt")
 
-        assertTrue(commonScriptSource.contains("fun buildCommonFormScript()"))
-        assertTrue(cacheScriptSource.contains("fun buildCachePageScript()"))
-        assertTrue(logsScriptSource.contains("fun buildLogsPageScript()"))
-        assertFalse(cacheScriptSource.contains("fun buildLogsPageScript()"))
-        assertFalse(logsScriptSource.contains("fun buildCachePageScript()"))
-        assertFalse(commonScriptSource.contains("fun buildCachePageScript()"))
-        assertFalse(commonScriptSource.contains("fun buildLogsPageScript()"))
-        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageScripts.kt").none(Files::exists))
+        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageCommonScript.kt").none(Files::exists))
+        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageCacheScript.kt").none(Files::exists))
+        assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageLogsScript.kt").none(Files::exists))
+        assertTrue(shellSource.contains("fun buildCommonFormScript()"))
+        assertTrue(scriptsSource.contains("fun buildCachePageScript()"))
+        assertTrue(scriptsSource.contains("fun buildLogsPageScript()"))
+        assertFalse(scriptsSource.contains("fun buildCommonFormScript()"))
     }
 
     @Test
@@ -485,20 +519,18 @@ class ArchitectureCleanupTest {
     @Test
     fun adminDiagnosticsViewsUseDedicatedAdminProjection() {
         val routesSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/admin/AdminHttpRoutes.kt")
-        val cacheSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageCache.kt")
+        val sectionsSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageSections.kt")
         val diagnosticsSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageDiagnostics.kt")
-        val slotsSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/admin/ControlPageDiagnosticsSlots.kt")
 
         assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/AdminPlaybackDiagnostics.kt").any(Files::exists))
         assertTrue(routesSource.contains("toAdminPlaybackDiagnosticsSnapshot()"))
-        assertFalse(cacheSource.contains("labs.newrapaw.dlna.probe.proxy.PlaybackDiagnosticsSnapshot"))
+        assertFalse(sectionsSource.contains("labs.newrapaw.dlna.probe.proxy.PlaybackDiagnosticsSnapshot"))
         assertFalse(diagnosticsSource.contains("labs.newrapaw.dlna.probe.proxy.PlaybackDiagnosticsSnapshot"))
         assertFalse(diagnosticsSource.contains("labs.newrapaw.dlna.probe.proxy.PlaybackDiagnosticsStatus"))
         assertFalse(diagnosticsSource.contains("labs.newrapaw.dlna.probe.proxy.DiagnosticsSeverity"))
         assertFalse(diagnosticsSource.contains("labs.newrapaw.dlna.probe.proxy.SegmentSample"))
-        assertFalse(slotsSource.contains("labs.newrapaw.dlna.probe.proxy.PlaybackDiagnosticsSnapshot"))
-        assertFalse(slotsSource.contains("labs.newrapaw.dlna.probe.proxy.AssetDiagnosticsItem"))
-        assertFalse(slotsSource.contains("labs.newrapaw.dlna.probe.proxy.SlotDiagnosticsState"))
+        assertFalse(diagnosticsSource.contains("labs.newrapaw.dlna.probe.proxy.AssetDiagnosticsItem"))
+        assertFalse(diagnosticsSource.contains("labs.newrapaw.dlna.probe.proxy.SlotDiagnosticsState"))
     }
 
     @Test
@@ -524,18 +556,8 @@ class ArchitectureCleanupTest {
     }
 
     @Test
-    fun proxyPlaybackDiagnosticsBridgeKeepsOnlyPlaybackStatusAlias() {
-        val source = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/PlaybackDiagnostics.kt")
-
-        assertTrue(source.contains("typealias PlaybackDiagnosticsStatus = labs.newrapaw.dlna.probe.core.PlaybackDiagnosticsStatus"))
-        assertFalse(source.contains("typealias DiagnosticsSeverity"))
-        assertFalse(source.contains("typealias SlotDiagnosticsState"))
-        assertFalse(source.contains("typealias SegmentSample"))
-        assertFalse(source.contains("typealias SlotDiagnosticsItem"))
-        assertFalse(source.contains("typealias AssetDiagnosticsItem"))
-        assertFalse(source.contains("typealias DiagnosticsInsight"))
-        assertFalse(source.contains("typealias PlaybackDiagnosticsSnapshot"))
-        assertFalse(source.contains("typealias PlaybackDiagnosticsState"))
+    fun appModuleDoesNotKeepPlaybackDiagnosticsStatusAliasBridge() {
+        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/proxy/PlaybackDiagnostics.kt").none(Files::exists))
     }
 
     @Test
@@ -596,7 +618,7 @@ class ArchitectureCleanupTest {
     fun appModuleMovesProxyRuntimeCodeIntoDedicatedProxyPackage() {
         assertTrue(proxySourcePaths("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxy.kt").any(Files::exists))
         assertTrue(proxySourcePaths("src/main/java/labs/newrapaw/dlna/probe/proxy/SharedPreferencesProxySettingsStore.kt").any(Files::exists))
-        assertTrue(proxySourcePaths("src/main/java/labs/newrapaw/dlna/probe/proxy/PlaybackDiagnostics.kt").any(Files::exists))
+        assertTrue(proxySourcePaths("src/main/java/labs/newrapaw/dlna/probe/proxy/PlaybackDiagnostics.kt").none(Files::exists))
         assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/LocalHlsProxy.kt").none(Files::exists))
         assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/ProxyConfig.kt").none(Files::exists))
         assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/PlaybackDiagnostics.kt").none(Files::exists))
@@ -638,6 +660,9 @@ class ArchitectureCleanupTest {
 
     private fun sourceText(path: String): String =
         String(Files.readAllBytes(sourcePaths(path).first(Files::exists)), Charsets.UTF_8)
+
+    private fun coreSourceText(path: String): String =
+        String(Files.readAllBytes(coreSourcePaths(path).first(Files::exists)), Charsets.UTF_8)
 
     private fun sourcePaths(path: String): List<Path> =
         listOf(

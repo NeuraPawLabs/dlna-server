@@ -5,7 +5,9 @@ import java.io.File
 import labs.newrapaw.dlna.probe.core.ActiveSessionInfo
 import labs.newrapaw.dlna.probe.core.CoreLocalHlsProxy
 import labs.newrapaw.dlna.probe.core.InMemoryProxySettingsStore
+import labs.newrapaw.dlna.probe.core.PlaybackDiagnosticsStatus
 import labs.newrapaw.dlna.probe.core.ProxySettingsStore
+import labs.newrapaw.dlna.probe.core.shouldSuppressRequestFailureLog
 import labs.newrapaw.dlna.probe.dlna.DlnaDeviceConfig
 import okhttp3.OkHttpClient
 
@@ -65,8 +67,12 @@ class LocalHlsProxy(
         coreProxy = coreProxy,
         adminRoutes = adminRuntime.routes,
         dlnaRoutes = dlnaRuntime.routes,
-        shouldSuppressRequestFailureLog = ::shouldSuppressProxyRequestFailureLog,
+        shouldSuppressRequestFailureLog = ::shouldSuppressRequestFailureLog,
         safeLog = ::safeLog,
+    )
+    internal val playbackState = LocalHlsProxyPlaybackStateBridge(
+        coreProxy = coreProxy,
+        baseUrl = { baseUrl },
     )
 
     val port: Int
@@ -77,18 +83,18 @@ class LocalHlsProxy(
 
     fun publicBaseUrl(hostAddress: String): String = servingRuntime.publicBaseUrl(hostAddress)
 
-    fun activeSessionInfo(): ActiveSessionInfo? = coreProxy.activeSessionInfo(baseUrl)
+    fun activeSessionInfo(): ActiveSessionInfo? = playbackState.activeSessionInfo()
 
     fun updatePlaybackStatus(status: PlaybackDiagnosticsStatus) {
-        coreProxy.updatePlaybackStatus(status)
+        playbackState.updatePlaybackStatus(status)
     }
 
     fun clearActivePlaybackSession() {
-        coreProxy.clearActiveSessionCache()
+        playbackState.clearActivePlaybackSession()
     }
 
     fun updatePlaybackError(message: String?) {
-        coreProxy.updatePlaybackError(message)
+        playbackState.updatePlaybackError(message)
     }
 
     fun updatePlayerTelemetry(
@@ -96,7 +102,7 @@ class LocalHlsProxy(
         bufferedPositionMs: Long?,
         isLoading: Boolean?,
     ) {
-        coreProxy.updatePlayerTelemetry(
+        playbackState.updatePlayerTelemetry(
             positionMs = positionMs,
             bufferedPositionMs = bufferedPositionMs,
             isLoading = isLoading,

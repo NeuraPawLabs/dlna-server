@@ -37,13 +37,14 @@ class MainActivityStabilityTest {
         assertTrue(helperSource.contains("postToUi(\"stop\")"))
         assertTrue(helperSource.contains("postToUi(\"pause\")"))
         assertTrue(helperSource.contains("postToUi(\"seek\")"))
-        assertTrue(helperSource.contains("proxyProvider().clearActivePlaybackSession()"))
+        assertTrue(helperSource.contains("playbackStateProvider().clearActivePlaybackSession()"))
         assertTrue(helperSource.contains("proxyProvider().updateDlnaPosition(positionMs)"))
         assertTrue(helperSource.contains("applyCommandState(rendererPlayCommandState())"))
         assertTrue(helperSource.contains("applyCommandState(rendererPauseCommandState())"))
         assertTrue(helperSource.contains("applyCommandState(rendererStopCommandState())"))
         assertTrue(serviceRuntimeSource.contains("playbackController.handleStopRequest()"))
         assertTrue(servicePlaybackSource.contains("proxy().updateDlnaPosition(positionMs)"))
+        assertTrue(servicePlaybackSource.contains("playbackState().updatePlaybackStatus(update.diagnosticsStatus)"))
     }
 
     @Test

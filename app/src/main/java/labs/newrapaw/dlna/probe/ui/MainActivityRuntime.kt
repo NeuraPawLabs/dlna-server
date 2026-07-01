@@ -8,7 +8,7 @@ import labs.newrapaw.dlna.probe.core.ProxySettingsStore
 import labs.newrapaw.dlna.probe.platform.RendererServiceRuntime
 import labs.newrapaw.dlna.probe.proxy.LocalHlsProxy
 
-class MainActivityRuntime(
+internal class MainActivityRuntime(
     val player: ExoPlayer,
     val proxy: LocalHlsProxy,
     val proxySettingsStore: ProxySettingsStore,
@@ -24,7 +24,7 @@ class MainActivityRuntime(
     }
 }
 
-fun buildMainActivityRuntime(
+internal fun buildMainActivityRuntime(
     activity: AppCompatActivity,
     serviceRuntime: RendererServiceRuntime,
     logState: MainActivityLogState,
@@ -44,6 +44,7 @@ fun buildMainActivityRuntime(
         runOnUiThread = { block -> activity.runOnUiThread(block) },
         player = player,
         proxyProvider = { services.proxy },
+        playbackStateProvider = { services.proxy.playbackState },
         appendLog = logState::append,
         setStatus = setStatus,
         enterFullscreenPlayback = enterFullscreenPlayback,

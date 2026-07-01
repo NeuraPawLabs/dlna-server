@@ -2,9 +2,9 @@ package labs.newrapaw.dlna.probe
 
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import labs.newrapaw.dlna.probe.core.PlaybackDiagnosticsStatus
 import labs.newrapaw.dlna.probe.platform.RendererPlaybackRecoveryAction
 import labs.newrapaw.dlna.probe.platform.playbackDiagnosticsStatusFor
-import labs.newrapaw.dlna.probe.proxy.PlaybackDiagnosticsStatus
 import labs.newrapaw.dlna.probe.ui.decidePlayerErrorRecovery
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse

@@ -25,6 +25,7 @@ internal fun buildRendererServiceRuntime(context: Context): RendererServiceRunti
     val playbackController = RendererServicePlayerController(
         player = player,
         proxyProvider = { proxy },
+        playbackStateProvider = { proxy.playbackState },
         appendLog = logState::append,
         recoveryState = recoveryState,
     )
@@ -44,11 +45,12 @@ internal fun buildRendererServiceRuntime(context: Context): RendererServiceRunti
     val playerListener = RendererServicePlayerListener(
         player = player,
         proxy = proxy,
+        playbackState = proxy.playbackState,
         appendLog = logState::append,
         recoveryState = recoveryState,
     )
     val playbackTelemetry = RendererServicePlaybackTelemetry(
-        proxy = proxy,
+        playbackState = proxy.playbackState,
         player = player,
     )
     val proxyStarted = runCatching {
@@ -77,7 +79,7 @@ internal fun buildRendererServiceRuntime(context: Context): RendererServiceRunti
                 context = context,
                 currentPositionMs = { player.currentPosition.takeIf { it >= 0L } },
                 isPlaying = { player.isPlaying },
-                hasActiveSession = { proxy.activeSessionInfo() != null },
+                hasActiveSession = { proxy.playbackState.activeSessionInfo() != null },
                 pauseForNetworkLoss = playbackController::handlePauseForNetworkLoss,
                 rebuildSessionAfterNetworkRecovery = { positionMs, resumePlayback ->
                     val recoveredManifestUrl = proxy.recoverActivePlaybackSession() ?: return@startRendererServiceNetworkMonitor

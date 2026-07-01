@@ -42,3 +42,22 @@ class PlaybackSessionManager(
         internal const val MAX_CLOSED_SESSION_HISTORY = 64
     }
 }
+
+internal data class PlaybackSessionManagerState(
+    val active: PlaybackSession? = null,
+    val closed: List<PlaybackSession> = emptyList(),
+) {
+    fun withStartedSession(session: PlaybackSession): PlaybackSessionManagerState =
+        copy(active = session)
+
+    fun withClosedSession(
+        session: PlaybackSession,
+        maxClosedSessionHistory: Int,
+    ): PlaybackSessionManagerState {
+        val nextClosed = (closed + session).takeLast(maxClosedSessionHistory)
+        return copy(
+            active = null,
+            closed = nextClosed,
+        )
+    }
+}

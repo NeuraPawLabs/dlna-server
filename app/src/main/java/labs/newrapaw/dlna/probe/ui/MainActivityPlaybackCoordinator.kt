@@ -10,12 +10,13 @@ import labs.newrapaw.dlna.probe.platform.rendererPauseCommandState
 import labs.newrapaw.dlna.probe.platform.rendererPlayCommandState
 import labs.newrapaw.dlna.probe.platform.rendererStopCommandState
 import labs.newrapaw.dlna.probe.proxy.LocalHlsProxy
-import labs.newrapaw.dlna.probe.proxy.PlaybackDiagnosticsStatus
+import labs.newrapaw.dlna.probe.proxy.LocalHlsProxyPlaybackStateBridge
 
-class MainActivityPlaybackCoordinator(
+internal class MainActivityPlaybackCoordinator(
     private val runOnUiThread: ((() -> Unit) -> Unit),
     private val player: ExoPlayer,
     private val proxyProvider: () -> LocalHlsProxy,
+    private val playbackStateProvider: () -> LocalHlsProxyPlaybackStateBridge,
     private val appendLog: (String) -> Unit,
     private val setStatus: (String) -> Unit,
     private val enterFullscreenPlayback: () -> Unit,
@@ -79,7 +80,7 @@ class MainActivityPlaybackCoordinator(
         player.clearMediaItems()
         exitFullscreenPlayback()
         setStatus("Stopped")
-        proxyProvider().clearActivePlaybackSession()
+        playbackStateProvider().clearActivePlaybackSession()
         appendLog("Stopped")
     }
 
@@ -141,12 +142,12 @@ class MainActivityPlaybackCoordinator(
     }
 
     private fun applyCommandState(update: RendererCommandStateUpdate) {
-        proxyProvider().updatePlaybackStatus(update.diagnosticsStatus)
+        playbackStateProvider().updatePlaybackStatus(update.diagnosticsStatus)
         proxyProvider().updateDlnaTransportState(
             transportState = update.dlnaTransportState,
             positionMs = update.resetPositionMs,
         )
-        proxyProvider().updatePlayerTelemetry(
+        playbackStateProvider().updatePlayerTelemetry(
             positionMs = update.resetPositionMs,
             bufferedPositionMs = update.resetPositionMs,
             isLoading = update.isLoading,

@@ -8,15 +8,17 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import labs.newrapaw.dlna.probe.core.PlaybackDiagnosticsStatus
 import labs.newrapaw.dlna.probe.proxy.LocalHlsProxy
+import labs.newrapaw.dlna.probe.proxy.LocalHlsProxyPlaybackStateBridge
 
-class RendererServicePlayerListener(
+internal class RendererServicePlayerListener(
     private val player: ExoPlayer,
     private val proxy: LocalHlsProxy,
+    private val playbackState: LocalHlsProxyPlaybackStateBridge,
     private val appendLog: (String) -> Unit,
     private val recoveryState: RendererServicePlayerRecoveryState,
 ) : Player.Listener {
     override fun onPlaybackStateChanged(playbackState: Int) {
-        proxy.updatePlaybackStatus(
+        this.playbackState.updatePlaybackStatus(
             playbackDiagnosticsStatusFor(
                 playbackState = playbackState,
                 isPlaying = player.isPlaying,
@@ -36,7 +38,7 @@ class RendererServicePlayerListener(
             positionMs = player.currentPosition.takeIf { it >= 0L },
             durationMs = player.duration.takeIf { it >= 0L },
         )
-        proxy.updatePlayerTelemetry(
+        this.playbackState.updatePlayerTelemetry(
             positionMs = player.currentPosition.takeIf { it >= 0L },
             bufferedPositionMs = player.bufferedPosition.takeIf { it >= 0L },
             isLoading = player.isLoading,
@@ -44,7 +46,7 @@ class RendererServicePlayerListener(
     }
 
     override fun onIsPlayingChanged(isPlaying: Boolean) {
-        proxy.updatePlaybackStatus(
+        playbackState.updatePlaybackStatus(
             playbackDiagnosticsStatusFor(
                 playbackState = player.playbackState,
                 isPlaying = isPlaying,
@@ -66,10 +68,10 @@ class RendererServicePlayerListener(
         )
         if (recovery.shouldRecover && recovery.seekPositionMs != null) {
             recoveryState.update(recovery.nextAttemptCount, recovery.seekPositionMs)
-            proxy.updatePlaybackStatus(PlaybackDiagnosticsStatus.BUFFERING)
+            playbackState.updatePlaybackStatus(PlaybackDiagnosticsStatus.BUFFERING)
             when (recovery.action) {
                 RendererPlaybackRecoveryAction.SEEK -> {
-                    proxy.updatePlaybackError(
+                    playbackState.updatePlaybackError(
                         "Recovering from ${error.errorCodeName}: ${error.message}",
                     )
                     appendLog(
@@ -91,7 +93,7 @@ class RendererServicePlayerListener(
                         }
                         .getOrNull()
                     if (!rebuiltUrl.isNullOrBlank()) {
-                        proxy.updatePlaybackError(
+                        playbackState.updatePlaybackError(
                             "Rebuilding session after ${error.errorCodeName}: ${error.message}",
                         )
                         appendLog(
@@ -112,16 +114,16 @@ class RendererServicePlayerListener(
             }
         }
         recoveryState.clear()
-        proxy.clearActivePlaybackSession()
-        proxy.updatePlaybackStatus(PlaybackDiagnosticsStatus.FAILED)
-        proxy.updatePlaybackError("${error.errorCodeName}: ${error.message}")
+        playbackState.clearActivePlaybackSession()
+        playbackState.updatePlaybackStatus(PlaybackDiagnosticsStatus.FAILED)
+        playbackState.updatePlaybackError("${error.errorCodeName}: ${error.message}")
         proxy.updateDlnaTransportState(
             transportState = "STOPPED",
             transportStatus = "ERROR_OCCURRED",
             positionMs = player.currentPosition.takeIf { it >= 0L },
             durationMs = player.duration.takeIf { it >= 0L },
         )
-        proxy.updatePlayerTelemetry(
+        playbackState.updatePlayerTelemetry(
             positionMs = player.currentPosition.takeIf { it >= 0L },
             bufferedPositionMs = player.bufferedPosition.takeIf { it >= 0L },
             isLoading = player.isLoading,

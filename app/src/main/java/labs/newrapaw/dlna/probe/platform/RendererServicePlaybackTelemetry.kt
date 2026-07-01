@@ -5,17 +5,17 @@ package labs.newrapaw.dlna.probe.platform
 import android.os.Handler
 import android.os.Looper
 import androidx.media3.exoplayer.ExoPlayer
-import labs.newrapaw.dlna.probe.proxy.LocalHlsProxy
+import labs.newrapaw.dlna.probe.proxy.LocalHlsProxyPlaybackStateBridge
 
-class RendererServicePlaybackTelemetry(
-    private val proxy: LocalHlsProxy,
+internal class RendererServicePlaybackTelemetry(
+    private val playbackState: LocalHlsProxyPlaybackStateBridge,
     private val player: ExoPlayer,
     private val handler: Handler = Handler(Looper.getMainLooper()),
     private val telemetryIntervalMs: Long = 500L,
 ) {
     private val telemetryUpdater = object : Runnable {
         override fun run() {
-            proxy.updatePlayerTelemetry(
+            playbackState.updatePlayerTelemetry(
                 positionMs = player.currentPosition.takeIf { it >= 0L },
                 bufferedPositionMs = player.bufferedPosition.takeIf { it >= 0L },
                 isLoading = player.isLoading,

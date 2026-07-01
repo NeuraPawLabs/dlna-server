@@ -4,7 +4,7 @@ import labs.newrapaw.dlna.probe.platform.RendererCommandStateUpdate
 import labs.newrapaw.dlna.probe.platform.rendererPlayCommandState
 import labs.newrapaw.dlna.probe.platform.rendererPauseCommandState
 import labs.newrapaw.dlna.probe.platform.rendererStopCommandState
-import labs.newrapaw.dlna.probe.proxy.PlaybackDiagnosticsStatus
+import labs.newrapaw.dlna.probe.core.PlaybackDiagnosticsStatus
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull

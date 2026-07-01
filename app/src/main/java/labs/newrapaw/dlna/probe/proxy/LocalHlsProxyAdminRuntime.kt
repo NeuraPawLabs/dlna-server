@@ -2,6 +2,7 @@ package labs.newrapaw.dlna.probe.proxy
 
 import labs.newrapaw.dlna.probe.admin.AdminHttpRoutes
 import labs.newrapaw.dlna.probe.core.ActiveSessionInfo
+import labs.newrapaw.dlna.probe.core.PlaybackDiagnosticsStatus
 import labs.newrapaw.dlna.probe.core.PlaybackDiagnosticsSnapshot
 import labs.newrapaw.dlna.probe.core.ProxySettingsStore
 

@@ -3,7 +3,6 @@ package labs.newrapaw.dlna.probe.core
 import java.io.Closeable
 import java.io.File
 import java.io.OutputStream
-import java.net.SocketException
 import okhttp3.OkHttpClient
 
 class CoreLocalHlsProxy(
@@ -84,12 +83,5 @@ class CoreLocalHlsProxy(
 
     private fun safeLog(message: String) {
         runCatching { log(message) }
-    }
-
-    private fun shouldSuppressRequestFailureLog(error: Throwable): Boolean {
-        val socketError = error as? SocketException ?: return false
-        val message = socketError.message.orEmpty()
-        return message.contains("Broken pipe", ignoreCase = true) ||
-            message.contains("Connection reset by peer", ignoreCase = true)
     }
 }

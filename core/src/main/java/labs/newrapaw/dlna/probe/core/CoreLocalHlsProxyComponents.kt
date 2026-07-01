@@ -3,8 +3,6 @@ package labs.newrapaw.dlna.probe.core
 import java.io.Closeable
 import java.io.File
 import java.util.concurrent.ExecutorService
-import java.util.concurrent.LinkedBlockingQueue
-import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import okhttp3.OkHttpClient
@@ -147,21 +145,6 @@ internal class CoreLocalHlsProxyComponents(
         const val CORE_UPSTREAM_RACE_QUEUE_CAPACITY = 16
         const val CORE_SESSION_PREFETCH_MAX_THREADS = 6
         const val CORE_SESSION_PREFETCH_QUEUE_CAPACITY = 64
-
-        fun boundedExecutor(
-            maxThreads: Int,
-            queueCapacity: Int,
-        ): ThreadPoolExecutor =
-            ThreadPoolExecutor(
-                maxThreads,
-                maxThreads,
-                60L,
-                TimeUnit.SECONDS,
-                LinkedBlockingQueue(queueCapacity),
-                ThreadPoolExecutor.AbortPolicy(),
-            ).apply {
-                allowCoreThreadTimeOut(true)
-            }
 
         fun shutdownGracefully(executor: ExecutorService) {
             executor.shutdown()

@@ -20,6 +20,7 @@ import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
+import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -46,21 +47,48 @@ class CoreLocalHlsProxyTest {
 
     @Test
     fun connectionResetByPeerIsNotLoggedAsRequestFailure() {
-        val proxy = CoreLocalHlsProxy(
-            client = OkHttpClient(),
-            log = {},
+        val suppressed = shouldSuppressRequestFailureLog(SocketException("Connection reset by peer"))
+
+        assertTrue(suppressed)
+    }
+
+    @Test
+    fun brokenPipeIsNotLoggedAsRequestFailure() {
+        val suppressed = shouldSuppressRequestFailureLog(SocketException("Broken pipe"))
+
+        assertTrue(suppressed)
+    }
+
+    @Test
+    fun boundedExecutorUsesAbortPolicyByDefault() {
+        val executor = boundedExecutor(
+            maxThreads = 2,
+            queueCapacity = 3,
         )
 
-        proxy.start()
         try {
-            val method = CoreLocalHlsProxy::class.java.getDeclaredMethod("shouldSuppressRequestFailureLog", Throwable::class.java)
-            method.isAccessible = true
-
-            val suppressed = method.invoke(proxy, SocketException("Connection reset by peer")) as Boolean
-
-            assertTrue(suppressed)
+            assertEquals(2, executor.corePoolSize)
+            assertEquals(2, executor.maximumPoolSize)
+            assertEquals(3, executor.queue.remainingCapacity() + executor.queue.size)
+            assertTrue(executor.allowsCoreThreadTimeOut())
+            assertTrue(executor.rejectedExecutionHandler is ThreadPoolExecutor.AbortPolicy)
         } finally {
-            proxy.close()
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun boundedExecutorCanUseCallerRunsPolicyWhenRequested() {
+        val executor = boundedExecutor(
+            maxThreads = 2,
+            queueCapacity = 3,
+            callerRunsOnSaturation = true,
+        )
+
+        try {
+            assertTrue(executor.rejectedExecutionHandler is ThreadPoolExecutor.CallerRunsPolicy)
+        } finally {
+            executor.shutdownNow()
         }
     }
 
