@@ -30,44 +30,56 @@ class MainActivity : AppCompatActivity() {
             appendLog = ::appendServiceLog,
             onConnectionFailed = ::showRendererServiceConnectionError,
         ) { connectedRuntime, connection ->
-            serviceRuntime = connectedRuntime
-            rendererServiceConnection = connection
-            logState.attach(serviceRuntime.logState)
-            runtime = buildMainActivityRuntime(
-                activity = this,
-                serviceRuntime = connectedRuntime,
-                logState = logState,
-                setStatus = ::setStatus,
-                enterFullscreenPlayback = ::enterFullscreenPlayback,
-                exitFullscreenPlayback = ::exitFullscreenPlayback,
-                selectMenuItem = ::selectMenuItem,
-                onMenuFocusChange = { item, view, hasFocus ->
-                    updateTvMenuItemStyle(selectedMenuItem, item, view, hasFocus)
-                },
-                currentRecoveryAttempts = { playbackRecoveryAttempts },
-                currentRecoverySeekPositionMs = { lastRecoverySeekPositionMs },
-                updateRecoveryState = { attemptCount, seekPositionMs ->
-                    playbackRecoveryAttempts = attemptCount
-                    lastRecoverySeekPositionMs = seekPositionMs
-                },
-                clearRecoveryState = {
-                    playbackRecoveryAttempts = 0
-                    lastRecoverySeekPositionMs = null
-                },
-            )
-            rendererServiceReady = true
-            setContentView(runtime.shell.rootView)
-            selectMenuItem(TvMenuItem.PLAY)
-            installMainActivityBackHandler(
-                activity = this,
-                isFullscreenPlayback = { isFullscreenPlayback },
-                onStopPlayback = runtime.playbackCoordinator::handleStopRequest,
-                onExitActivity = ::finish,
-            )
-            logState.append("IP: ${resolveLocalIpAddress()}")
-            logState.append("Proxy: ${runtime.proxy.baseUrl}")
-            logState.append("Open on phone: ${buildPublicControlUrl(resolveLocalIpAddress(), runtime.proxy::publicBaseUrl)}")
-            setStatus("Idle")
+            var connectedActivityRuntime: MainActivityRuntime? = null
+            runCatching {
+                serviceRuntime = connectedRuntime
+                rendererServiceConnection = connection
+                logState.attach(serviceRuntime.logState)
+                connectedActivityRuntime = buildMainActivityRuntime(
+                    activity = this,
+                    serviceRuntime = connectedRuntime,
+                    logState = logState,
+                    setStatus = ::setStatus,
+                    enterFullscreenPlayback = ::enterFullscreenPlayback,
+                    exitFullscreenPlayback = ::exitFullscreenPlayback,
+                    selectMenuItem = ::selectMenuItem,
+                    onMenuFocusChange = { item, view, hasFocus ->
+                        updateTvMenuItemStyle(selectedMenuItem, item, view, hasFocus)
+                    },
+                    currentRecoveryAttempts = { playbackRecoveryAttempts },
+                    currentRecoverySeekPositionMs = { lastRecoverySeekPositionMs },
+                    updateRecoveryState = { attemptCount, seekPositionMs ->
+                        playbackRecoveryAttempts = attemptCount
+                        lastRecoverySeekPositionMs = seekPositionMs
+                    },
+                    clearRecoveryState = {
+                        playbackRecoveryAttempts = 0
+                        lastRecoverySeekPositionMs = null
+                    },
+                )
+                runtime = requireNotNull(connectedActivityRuntime)
+                rendererServiceReady = true
+                setContentView(runtime.shell.rootView)
+                selectMenuItem(TvMenuItem.PLAY)
+                installMainActivityBackHandler(
+                    activity = this,
+                    isFullscreenPlayback = { isFullscreenPlayback },
+                    onStopPlayback = runtime.playbackCoordinator::handleStopRequest,
+                    onExitActivity = ::finish,
+                )
+                logState.append("IP: ${resolveLocalIpAddress()}")
+                logState.append("Proxy: ${runtime.proxy.baseUrl}")
+                logState.append("Open on phone: ${buildPublicControlUrl(resolveLocalIpAddress(), runtime.proxy::publicBaseUrl)}")
+                setStatus("Idle")
+            }.onFailure { error ->
+                rendererServiceReady = false
+                if (!::runtime.isInitialized) {
+                    runCatching { connectedActivityRuntime?.close() }
+                }
+                showRendererServiceConnectionError(
+                    "Renderer service UI bootstrap failed: ${error::class.java.simpleName}: ${error.message}",
+                )
+            }
         }
     }
 

@@ -108,4 +108,18 @@ class RendererServiceRuntimeArchitectureTest {
         assertFalse(runtimeSource.contains("val playerListener = RendererServicePlayerListener("))
         assertFalse(runtimeSource.contains("val playbackTelemetry = RendererServicePlaybackTelemetry("))
     }
+
+    @Test
+    fun rendererServiceRuntimeUsesThreadSafePlaybackReadsForNetworkMonitor() {
+        val bootstrapSource = String(
+            Files.readAllBytes(Paths.get("src/main/java/labs/newrapaw/dlna/probe/platform/RendererServiceRuntimeBootstrap.kt")),
+            Charsets.UTF_8,
+        )
+
+        assertTrue(bootstrapSource.contains("val playbackSnapshotReader = RendererServicePlaybackSnapshotReader("))
+        assertTrue(bootstrapSource.contains("currentPositionMs = playbackSnapshotReader::currentPositionMs"))
+        assertTrue(bootstrapSource.contains("isPlaying = playbackSnapshotReader::isPlaying"))
+        assertFalse(bootstrapSource.contains("currentPositionMs = { player.currentPosition.takeIf { it >= 0L } }"))
+        assertFalse(bootstrapSource.contains("isPlaying = { player.isPlaying }"))
+    }
 }

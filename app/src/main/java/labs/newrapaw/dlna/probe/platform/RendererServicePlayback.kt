@@ -28,6 +28,58 @@ fun buildRendererServicePlayer(context: Context): ExoPlayer =
         )
         .build()
 
+internal class RendererServicePlaybackSnapshotReader(
+    private val player: ExoPlayer,
+    private val handler: Handler = Handler(Looper.getMainLooper()),
+) {
+    fun currentPositionMs(): Long? =
+        readCurrentPosition().takeIf { it >= 0L }
+
+    fun isPlaying(): Boolean =
+        if (Looper.myLooper() == handler.looper) {
+            player.isPlaying
+        } else {
+            readIsPlaying()
+        }
+
+    private fun readCurrentPosition(): Long {
+        if (Looper.myLooper() == handler.looper) {
+            return player.currentPosition
+        }
+        val result = AtomicReference<Long?>(null)
+        val failure = AtomicReference<Throwable?>(null)
+        val completion = CountDownLatch(1)
+        handler.post {
+            runCatching { player.currentPosition }
+                .onSuccess(result::set)
+                .onFailure(failure::set)
+            completion.countDown()
+        }
+        awaitCountDownOrThrow(completion, "read current position")
+        failure.get()?.let {
+            throw IllegalStateException("Player read current position failed", it)
+        }
+        return requireNotNull(result.get())
+    }
+
+    private fun readIsPlaying(): Boolean {
+        val result = AtomicReference<Boolean?>(null)
+        val failure = AtomicReference<Throwable?>(null)
+        val completion = CountDownLatch(1)
+        handler.post {
+            runCatching { player.isPlaying }
+                .onSuccess(result::set)
+                .onFailure(failure::set)
+            completion.countDown()
+        }
+        awaitCountDownOrThrow(completion, "read is playing")
+        failure.get()?.let {
+            throw IllegalStateException("Player read is playing failed", it)
+        }
+        return requireNotNull(result.get())
+    }
+}
+
 internal class RendererServicePlayerController(
     private val player: ExoPlayer,
     private val proxyProvider: () -> LocalHlsProxy,

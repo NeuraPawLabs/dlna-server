@@ -53,4 +53,16 @@ class MainActivityServiceConnectionTest {
         assertTrue(activitySource.contains("setContentView(connectionStatusView)"))
         assertTrue(activitySource.contains("updateMainActivityConnectionStatus(connectionStatusView, message)"))
     }
+
+    @Test
+    fun activitySurfacesRendererBootstrapFailuresInsteadOfCrashing() {
+        val activitySource = String(
+            Files.readAllBytes(Paths.get("src/main/java/labs/newrapaw/dlna/probe/ui/MainActivity.kt")),
+            Charsets.UTF_8,
+        )
+
+        assertTrue(activitySource.contains("runCatching {"))
+        assertTrue(activitySource.contains("showRendererServiceConnectionError("))
+        assertTrue(activitySource.contains("Renderer service UI bootstrap failed:"))
+    }
 }

@@ -16,6 +16,7 @@ internal fun buildRendererServiceRuntime(context: Context): RendererServiceRunti
         context.getSharedPreferences("newrapaw_dlna_settings", Context.MODE_PRIVATE),
     )
     val player = buildRendererServicePlayer(context)
+    val playbackSnapshotReader = RendererServicePlaybackSnapshotReader(player)
     val recoveryState = RendererServicePlayerRecoveryState()
     lateinit var proxy: LocalHlsProxy
     val dlnaConfig = buildRendererServiceDlnaConfigProvider(
@@ -77,8 +78,8 @@ internal fun buildRendererServiceRuntime(context: Context): RendererServiceRunti
         networkMonitor = if (proxyStarted) {
             startRendererServiceNetworkMonitor(
                 context = context,
-                currentPositionMs = { player.currentPosition.takeIf { it >= 0L } },
-                isPlaying = { player.isPlaying },
+                currentPositionMs = playbackSnapshotReader::currentPositionMs,
+                isPlaying = playbackSnapshotReader::isPlaying,
                 hasActiveSession = { proxy.playbackState.activeSessionInfo() != null },
                 pauseForNetworkLoss = playbackController::handlePauseForNetworkLoss,
                 rebuildSessionAfterNetworkRecovery = { positionMs, resumePlayback ->
