@@ -65,21 +65,24 @@ class HlsProxyTransformsTest {
     }
 
     @Test
-    fun parseSingleVariantMasterManifestRejectsMultipleVariants() {
+    fun parseSingleVariantMasterManifestSelectsHighestBandwidthVariant() {
         val manifest = """
             #EXTM3U
-            #EXT-X-STREAM-INF:BANDWIDTH=800000
+            #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio-low",NAME="Low",URI="audio-low/index.m3u8"
+            #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio-high",NAME="High",URI="audio-high/index.m3u8"
+            #EXT-X-STREAM-INF:BANDWIDTH=800000,AUDIO="audio-low"
             video/index.m3u8
-            #EXT-X-STREAM-INF:BANDWIDTH=1200000
+            #EXT-X-STREAM-INF:BANDWIDTH=1200000,AUDIO="audio-high"
             video-hd/index.m3u8
         """.trimIndent()
 
-        assertNull(
-            labs.newrapaw.dlna.probe.core.parseSingleVariantMasterManifest(
-                manifest = manifest,
-                manifestUrl = "https://example.com/master.m3u8",
-            ),
+        val playlist = labs.newrapaw.dlna.probe.core.parseSingleVariantMasterManifest(
+            manifest = manifest,
+            manifestUrl = "https://example.com/master.m3u8",
         )
+
+        assertEquals("https://example.com/video-hd/index.m3u8", playlist?.variantUrl)
+        assertEquals("https://example.com/audio-high/index.m3u8", playlist?.audioTracks?.single()?.uri)
     }
 
     @Test

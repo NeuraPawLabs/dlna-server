@@ -193,6 +193,8 @@ internal class AdminHttpRoutes(
     }
 
     private fun respondCacheClear(output: OutputStream): Boolean {
+        updatePlaybackStatus(PlaybackDiagnosticsStatus.STOPPED)
+        onStopRequested()
         clearActiveSessionCache()
         safeLog("Session cache cleared")
         writeJson(output, 200, true, "Cache cleared")

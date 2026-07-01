@@ -93,4 +93,31 @@ internal class PlaybackDiagnosticsSessionTracker {
             currentLoadingTrackId = trackId,
             currentLoadingSource = source,
         )
+
+    fun clearPreparedSessionDiagnostics(
+        snapshot: PlaybackDiagnosticsSnapshot,
+    ): PlaybackDiagnosticsSnapshot =
+        snapshot.copy(
+            sessionStatus = null,
+            pendingPrefetchCount = 0,
+            inFlightCount = 0,
+            currentLoadingAssetId = null,
+            currentLoadingAssetKind = null,
+            currentLoadingTrackId = null,
+            currentLoadingSource = null,
+            slotStates = emptyList(),
+            assetDiagnostics = emptyList(),
+            currentPlaybackSlotIndex = null,
+            currentPlaybackSlotReady = null,
+            bufferedSlotIndex = null,
+            startupGatePhase = null,
+            startupGateReady = null,
+            startupGateDetail = null,
+            currentStallReason = null,
+            continuousReadySlotCount = 0,
+            continuousReadySlotDurationMs = 0L,
+            sessionReadyAssetCount = 0,
+            sessionTotalAssetCount = 0,
+            sessionReadyBytes = 0L,
+        )
 }

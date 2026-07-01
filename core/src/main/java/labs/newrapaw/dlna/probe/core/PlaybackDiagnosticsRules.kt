@@ -49,13 +49,11 @@ private fun diagnosticsInsights(snapshot: PlaybackDiagnosticsSnapshot): List<Dia
             "当前连续失败次数 ${snapshot.consecutiveFailures}，阈值大于 0",
         )
     }
-    val directAvg = snapshot.directAverageElapsedMs
-    val proxyAvg = snapshot.proxyAverageElapsedMs
-    if (directAvg != null && proxyAvg != null && proxyAvg >= directAvg + 200) {
+    if (proxySlowerThanDirect(snapshot)) {
         insights += DiagnosticsInsight(
             "proxy_slower_than_direct",
             "代理链路平均耗时明显高于直连",
-            "代理 ${proxyAvg} ms，直连 ${directAvg} ms，差值 ${proxyAvg - directAvg} ms",
+            "代理 ${snapshot.proxyAverageElapsedMs} ms，直连 ${snapshot.directAverageElapsedMs} ms，差值 ${(snapshot.proxyAverageElapsedMs ?: 0) - (snapshot.directAverageElapsedMs ?: 0)} ms",
         )
     }
     if (snapshot.timeoutCount > 0) {
@@ -76,7 +74,7 @@ private fun diagnosticsSeverity(snapshot: PlaybackDiagnosticsSnapshot): Diagnost
         snapshot.currentPlaybackSlotReady == false && snapshot.currentPlaybackSlotIndex != null -> DiagnosticsSeverity.CRITICAL
         snapshot.currentPlaybackSlotIndex != null && snapshot.continuousReadySlotCount <= 1 -> DiagnosticsSeverity.CRITICAL
         snapshot.consecutiveFailures > 0 || snapshot.timeoutCount > 0 -> DiagnosticsSeverity.CRITICAL
-        (snapshot.proxyAverageElapsedMs ?: 0) >= ((snapshot.directAverageElapsedMs ?: Long.MAX_VALUE) + 200) -> DiagnosticsSeverity.WARN
+        proxySlowerThanDirect(snapshot) -> DiagnosticsSeverity.WARN
         else -> DiagnosticsSeverity.OK
     }
 
@@ -114,11 +112,7 @@ private fun primaryBottleneck(snapshot: PlaybackDiagnosticsSnapshot): Diagnostic
             "存在连续失败分片",
             "当前连续失败次数 ${snapshot.consecutiveFailures}，阈值大于 0",
         )
-        run {
-            val directAvg = snapshot.directAverageElapsedMs
-            val proxyAvg = snapshot.proxyAverageElapsedMs
-            directAvg != null && proxyAvg != null && proxyAvg >= directAvg + 200
-        } -> DiagnosticsInsight(
+        proxySlowerThanDirect(snapshot) -> DiagnosticsInsight(
             "proxy_slower_than_direct",
             "代理链路平均耗时明显高于直连",
             "代理 ${snapshot.proxyAverageElapsedMs} ms，直连 ${snapshot.directAverageElapsedMs} ms，差值 ${(snapshot.proxyAverageElapsedMs ?: 0) - (snapshot.directAverageElapsedMs ?: 0)} ms",
@@ -166,3 +160,9 @@ private fun blockedAssetLabel(kind: SessionAssetKind): String =
         SessionAssetKind.INIT_SEGMENT -> "初始化段"
         SessionAssetKind.KEY -> "密钥"
     }
+
+private fun proxySlowerThanDirect(snapshot: PlaybackDiagnosticsSnapshot): Boolean {
+    val directAvg = snapshot.directAverageElapsedMs ?: return false
+    val proxyAvg = snapshot.proxyAverageElapsedMs ?: return false
+    return proxyAvg >= directAvg + 200
+}

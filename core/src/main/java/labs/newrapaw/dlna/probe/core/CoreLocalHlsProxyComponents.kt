@@ -3,7 +3,10 @@ package labs.newrapaw.dlna.probe.core
 import java.io.Closeable
 import java.io.File
 import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import okhttp3.OkHttpClient
 import labs.newrapaw.dlna.probe.core.session.ManifestPlanner
 import labs.newrapaw.dlna.probe.core.session.PlaybackSessionManager
@@ -18,9 +21,23 @@ internal class CoreLocalHlsProxyComponents(
     safeLog: (String) -> Unit,
     shouldSuppressRequestFailureLog: (Throwable) -> Boolean,
 ) : Closeable {
-    private val executor: ExecutorService = Executors.newCachedThreadPool()
-    private val upstreamRaceExecutor: ExecutorService = Executors.newCachedThreadPool()
-    private val sessionPrefetchExecutor: ExecutorService = Executors.newCachedThreadPool()
+    private val sessionIdCounter = AtomicLong()
+    private val executor: ExecutorService? = if (serveHttp) {
+        boundedExecutor(
+            maxThreads = CORE_REQUEST_MAX_THREADS,
+            queueCapacity = CORE_REQUEST_QUEUE_CAPACITY,
+        )
+    } else {
+        null
+    }
+    private val upstreamRaceExecutor: ExecutorService = boundedExecutor(
+        maxThreads = CORE_UPSTREAM_RACE_MAX_THREADS,
+        queueCapacity = CORE_UPSTREAM_RACE_QUEUE_CAPACITY,
+    )
+    private val sessionPrefetchExecutor: ExecutorService = boundedExecutor(
+        maxThreads = CORE_SESSION_PREFETCH_MAX_THREADS,
+        queueCapacity = CORE_SESSION_PREFETCH_QUEUE_CAPACITY,
+    )
     private val sessionLocalServer = SessionLocalServer()
     private val manifestPlanner = ManifestPlanner()
     val sessionAssetStore = SessionAssetStore(sessionAssetRootDir)
@@ -77,7 +94,7 @@ internal class CoreLocalHlsProxyComponents(
         safeLog = safeLog,
     )
     private val sessionManager = PlaybackSessionManager(
-        createSessionId = { "session-${System.currentTimeMillis()}" },
+        createSessionId = { "session-${System.currentTimeMillis()}-${sessionIdCounter.incrementAndGet()}" },
         cleanupSession = { playbackRuntime.cleanupSession(it.sessionId) },
     )
     val requestHandler = CoreLocalHlsRequestHandler(
@@ -87,6 +104,7 @@ internal class CoreLocalHlsProxyComponents(
         sessionAssetStreamer = sessionAssetStreamer,
         sessionPreparer = sessionPreparer,
         getActiveSessionShell = playbackRuntime::activeSessionShell,
+        isClosedSessionId = sessionManager::isClosedSessionId,
         getActivePreparedSession = playbackRuntime::activePreparedSession,
         setActivePreparedSession = playbackRuntime::setActivePreparedSession,
         updatePlaybackPosition = playbackRuntime::updatePlaybackPosition,
@@ -101,24 +119,60 @@ internal class CoreLocalHlsProxyComponents(
         proxySettingsStore = proxySettingsStore,
         sessionLocalServer = sessionLocalServer,
     )
-    val proxyServer = CoreLocalHlsProxyServer(
-        executor = executor,
-        handleSocket = requestHandler::handle,
-        safeLog = safeLog,
-    )
+    val proxyServer = executor?.let { requestExecutor ->
+        CoreLocalHlsProxyServer(
+            executor = requestExecutor,
+            handleSocket = requestHandler::handle,
+            safeLog = safeLog,
+        )
+    }
 
     fun start() {
         sessionAssetStore.clearAllSessions()
-        if (serveHttp) {
-            proxyServer.start()
-        }
+        proxyServer?.start()
     }
 
     override fun close() {
-        proxyServer.close()
+        proxyServer?.close()
         playbackRuntime.close()
-        upstreamRaceExecutor.shutdownNow()
-        sessionPrefetchExecutor.shutdownNow()
-        executor.shutdownNow()
+        upstreamRaceExecutor.let(::shutdownGracefully)
+        sessionPrefetchExecutor.let(::shutdownGracefully)
+        executor?.let(::shutdownGracefully)
+    }
+
+    private companion object {
+        const val CORE_REQUEST_MAX_THREADS = 8
+        const val CORE_REQUEST_QUEUE_CAPACITY = 64
+        const val CORE_UPSTREAM_RACE_MAX_THREADS = 2
+        const val CORE_UPSTREAM_RACE_QUEUE_CAPACITY = 16
+        const val CORE_SESSION_PREFETCH_MAX_THREADS = 6
+        const val CORE_SESSION_PREFETCH_QUEUE_CAPACITY = 64
+
+        fun boundedExecutor(
+            maxThreads: Int,
+            queueCapacity: Int,
+        ): ThreadPoolExecutor =
+            ThreadPoolExecutor(
+                maxThreads,
+                maxThreads,
+                60L,
+                TimeUnit.SECONDS,
+                LinkedBlockingQueue(queueCapacity),
+                ThreadPoolExecutor.AbortPolicy(),
+            ).apply {
+                allowCoreThreadTimeOut(true)
+            }
+
+        fun shutdownGracefully(executor: ExecutorService) {
+            executor.shutdown()
+            try {
+                if (!executor.awaitTermination(2L, TimeUnit.SECONDS)) {
+                    executor.shutdownNow()
+                }
+            } catch (_: InterruptedException) {
+                executor.shutdownNow()
+                Thread.currentThread().interrupt()
+            }
+        }
     }
 }

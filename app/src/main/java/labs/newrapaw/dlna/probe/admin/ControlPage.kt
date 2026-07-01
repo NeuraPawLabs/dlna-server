@@ -10,7 +10,12 @@ fun decodeFormUrl(body: String): String? =
 fun decodeFormValue(body: String, key: String): String? {
     val params = body.split("&").mapNotNull {
         val parts = it.split("=", limit = 2)
-        if (parts.size == 2) parts[0] to URLDecoder.decode(parts[1], "UTF-8") else null
+        if (parts.size != 2) {
+            return@mapNotNull null
+        }
+        runCatching {
+            parts[0] to URLDecoder.decode(parts[1], "UTF-8")
+        }.getOrNull()
     }.toMap()
     return params[key]?.trim()?.takeIf { it.isNotEmpty() }
 }

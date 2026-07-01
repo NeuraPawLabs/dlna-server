@@ -39,14 +39,13 @@ internal class CoreLocalHlsSessionPreparer(
                     detail = "正在构建会话资源清单",
                 )
                 diagnosticsState.setSessionStatus(PlaybackSessionStatus.PRIMING.name)
-                val videoManifestUrl = manifestSet.videoManifestUrl
-                val videoManifestBody = manifestSet.videoManifestBody
+                val videoTracks = manifestSet.videoTracks
                 val audioTracks = manifestSet.audioTracks
                 val subtitleTracks = manifestSet.subtitleTracks
 
                 val plan = manifestPlanner.plan(
-                    manifestUrl = videoManifestUrl,
-                    videoManifest = videoManifestBody,
+                    videoTracks = videoTracks,
+                    primaryVideoTrackId = manifestSet.primaryVideoTrackId,
                     audioTracks = audioTracks,
                     subtitleTracks = subtitleTracks,
                 )

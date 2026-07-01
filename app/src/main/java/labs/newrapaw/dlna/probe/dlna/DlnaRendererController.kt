@@ -6,11 +6,14 @@ data class DlnaControlResponse(
     val body: String,
 )
 
-class DlnaRendererController(
+internal class DlnaRendererController(
     private val log: (String) -> Unit,
     private val onPlayRequested: (String) -> Unit,
     private val onStopRequested: () -> Unit,
     private val onPauseRequested: () -> Unit,
+    private val onSeekRequested: (Long) -> Unit = {},
+    private val onAvTransportStateChanged: (DlnaRendererSnapshot) -> Unit = {},
+    private val onRenderingControlStateChanged: (DlnaRendererSnapshot) -> Unit = {},
 ) {
     private val state = DlnaRendererState()
     private val avTransportService = DlnaAvTransportService(
@@ -19,9 +22,12 @@ class DlnaRendererController(
         onPlayRequested = onPlayRequested,
         onStopRequested = onStopRequested,
         onPauseRequested = onPauseRequested,
+        onSeekRequested = onSeekRequested,
+        onStateChanged = onAvTransportStateChanged,
     )
     private val renderingControlService = DlnaRenderingControlService(
         state = state,
+        onStateChanged = onRenderingControlStateChanged,
     )
     private val connectionManagerService = DlnaConnectionManagerService()
 
@@ -48,6 +54,30 @@ class DlnaRendererController(
             )
         }
     }
+
+    fun syncPlayerState(
+        transportState: String,
+        transportStatus: String = "OK",
+        positionMs: Long? = null,
+        durationMs: Long? = null,
+    ) {
+        onAvTransportStateChanged(
+            state.updateTransport(
+                transportState = transportState,
+                transportStatus = transportStatus,
+                relativeTimePosition = positionMs?.let(::formatDlnaTime),
+                mediaDurationMs = durationMs,
+            ),
+        )
+    }
+
+    fun syncPlayerPosition(positionMs: Long) {
+        onAvTransportStateChanged(
+            state.updatePosition(formatDlnaTime(positionMs)),
+        )
+    }
+
+    fun snapshot(): DlnaRendererSnapshot = state.snapshot()
 
     private fun shouldLogAction(serviceName: String, actionName: String): Boolean =
         when (serviceName to actionName) {

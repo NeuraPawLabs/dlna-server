@@ -2,31 +2,27 @@ package labs.newrapaw.dlna.probe.proxy
 
 import java.io.Closeable
 import java.io.File
-import java.net.SocketException
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
-import labs.newrapaw.dlna.probe.admin.AdminHttpRoutes
 import labs.newrapaw.dlna.probe.core.ActiveSessionInfo
 import labs.newrapaw.dlna.probe.core.CoreLocalHlsProxy
 import labs.newrapaw.dlna.probe.core.InMemoryProxySettingsStore
 import labs.newrapaw.dlna.probe.core.ProxySettingsStore
 import labs.newrapaw.dlna.probe.dlna.DlnaDeviceConfig
-import labs.newrapaw.dlna.probe.dlna.DlnaRendererController
 import okhttp3.OkHttpClient
 
 class LocalHlsProxy(
-    client: OkHttpClient = OkHttpClient(),
+    private val client: OkHttpClient = OkHttpClient(),
     private val log: (String) -> Unit,
     getLogs: () -> List<String> = { emptyList() },
     proxySettingsStore: ProxySettingsStore = InMemoryProxySettingsStore(),
     sessionAssetRootDir: File = File(requireNotNull(System.getProperty("java.io.tmpdir"))).resolve("pawcast-session-assets"),
     dlnaConfig: () -> DlnaDeviceConfig? = { null },
     private val onPlayRequested: (String) -> Unit = {},
+    private val beforePlaybackSwitch: () -> Unit = {},
     onStopRequested: () -> Unit = {},
     onPauseRequested: () -> Unit = {},
+    onSeekRequested: (Long) -> Unit = {},
     onUpdateRequested: (String) -> Unit = {},
 ) : Closeable {
-    private val executor: ExecutorService = Executors.newCachedThreadPool()
     private val coreProxy = CoreLocalHlsProxy(
         client = client,
         log = log,
@@ -34,18 +30,29 @@ class LocalHlsProxy(
         sessionAssetRootDir = sessionAssetRootDir,
         serveHttp = false,
     )
-    private val renderer = DlnaRendererController(
+    private val playbackRouter = LocalHlsProxyPlaybackRouter(
+        coreProxy = coreProxy,
+        localBaseUrl = { baseUrl },
+        safeLog = ::safeLog,
+        beforePlaybackSwitch = beforePlaybackSwitch,
+        onPlayRequested = onPlayRequested,
+    )
+    private val dlnaRuntime = LocalHlsProxyDlnaRuntime(
+        client = client,
+        dlnaConfig = dlnaConfig,
         log = log,
-        onPlayRequested = ::dispatchPlaybackRequest,
+        safeLog = ::safeLog,
+        onPlayRequested = playbackRouter::dispatch,
         onStopRequested = onStopRequested,
         onPauseRequested = onPauseRequested,
+        onSeekRequested = onSeekRequested,
     )
-    private val adminRoutes = AdminHttpRoutes(
+    private val adminRuntime = LocalHlsProxyAdminRuntime(
         proxySettingsStore = proxySettingsStore,
         getLogs = getLogs,
         diagnosticsSnapshot = coreProxy::diagnosticsSnapshot,
         activeSessionInfo = ::activeSessionInfo,
-        requestPlayback = ::dispatchPlaybackRequest,
+        requestPlayback = playbackRouter::dispatch,
         onStopRequested = onStopRequested,
         updatePlaybackStatus = coreProxy::updatePlaybackStatus,
         onUpdateRequested = onUpdateRequested,
@@ -54,39 +61,30 @@ class LocalHlsProxy(
         localPlaybackUrl = { baseUrl },
         safeLog = ::safeLog,
     )
-    private val dlnaRoutes = LocalHlsProxyDlnaRoutes(
-        dlnaConfig = dlnaConfig,
-        renderer = renderer,
-        safeLog = ::safeLog,
-    )
-    private val sessionRelay = LocalHlsProxySessionRelay(
-        handleSessionRequest = coreProxy::handleSessionRequest,
-    )
-    private val requestHandler = LocalHlsProxyRequestHandler(
-        adminRoutes = adminRoutes,
-        dlnaRoutes = dlnaRoutes,
-        sessionRelay = sessionRelay,
-        shouldSuppressRequestFailureLog = ::shouldSuppressRequestFailureLog,
-        safeLog = ::safeLog,
-    )
-    private val proxyServer = LocalHlsProxyServer(
-        executor = executor,
-        handleSocket = requestHandler::handle,
+    private val servingRuntime = LocalHlsProxyServingRuntime(
+        coreProxy = coreProxy,
+        adminRoutes = adminRuntime.routes,
+        dlnaRoutes = dlnaRuntime.routes,
+        shouldSuppressRequestFailureLog = ::shouldSuppressProxyRequestFailureLog,
         safeLog = ::safeLog,
     )
 
     val port: Int
-        get() = proxyServer.port
+        get() = servingRuntime.port
 
     val baseUrl: String
-        get() = proxyServer.baseUrl
+        get() = servingRuntime.baseUrl
 
-    fun publicBaseUrl(hostAddress: String): String = proxyServer.publicBaseUrl(hostAddress)
+    fun publicBaseUrl(hostAddress: String): String = servingRuntime.publicBaseUrl(hostAddress)
 
     fun activeSessionInfo(): ActiveSessionInfo? = coreProxy.activeSessionInfo(baseUrl)
 
     fun updatePlaybackStatus(status: PlaybackDiagnosticsStatus) {
         coreProxy.updatePlaybackStatus(status)
+    }
+
+    fun clearActivePlaybackSession() {
+        coreProxy.clearActiveSessionCache()
     }
 
     fun updatePlaybackError(message: String?) {
@@ -105,30 +103,34 @@ class LocalHlsProxy(
         )
     }
 
-    fun start() {
-        coreProxy.start()
-        proxyServer.start()
+    fun updateDlnaTransportState(
+        transportState: String,
+        transportStatus: String = "OK",
+        positionMs: Long? = null,
+        durationMs: Long? = null,
+    ) {
+        dlnaRuntime.syncPlayerState(
+            transportState = transportState,
+            transportStatus = transportStatus,
+            positionMs = positionMs,
+            durationMs = durationMs,
+        )
     }
+
+    fun updateDlnaPosition(positionMs: Long) {
+        dlnaRuntime.syncPlayerPosition(positionMs)
+    }
+
+    fun start() = servingRuntime.start()
 
     override fun close() {
-        proxyServer.close()
-        coreProxy.close()
-        executor.shutdownNow()
+        dlnaRuntime.close()
+        servingRuntime.close()
     }
 
-    private fun dispatchPlaybackRequest(sourceUrl: String) {
-        safeLog("Remote play request: $sourceUrl")
-        val session = coreProxy.openSession(sourceUrl, localBaseUrl = baseUrl)
-        onPlayRequested(session.localManifestUrl)
-    }
+    fun recoverActivePlaybackSession(): String? = playbackRouter.recoverActivePlaybackSession(baseUrl)
 
     private fun safeLog(message: String) {
         runCatching { log(message) }
-    }
-
-    private fun shouldSuppressRequestFailureLog(error: Throwable): Boolean {
-        val socketError = error as? SocketException ?: return false
-        val message = socketError.message.orEmpty()
-        return message.contains("Broken pipe", ignoreCase = true)
     }
 }

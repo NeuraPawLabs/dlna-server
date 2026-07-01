@@ -13,6 +13,23 @@ data class HlsMediaTrack(
     val isDefault: Boolean,
 )
 
+data class HlsVariantStream(
+    val trackId: String,
+    val uri: String,
+    val bandwidth: Long?,
+    val averageBandwidth: Long?,
+    val resolution: String?,
+    val codecs: String?,
+    val audioGroupId: String?,
+    val subtitleGroupId: String?,
+)
+
+data class HlsMasterPlaylist(
+    val videoVariants: List<HlsVariantStream>,
+    val audioTracks: List<HlsMediaTrack>,
+    val subtitleTracks: List<HlsMediaTrack>,
+)
+
 data class SingleVariantMasterPlaylist(
     val variantUrl: String,
     val audioTracks: List<HlsMediaTrack>,
@@ -31,10 +48,10 @@ fun isVodManifest(manifest: String): Boolean =
 fun looksLikeMasterPlaylist(manifest: String): Boolean =
     manifest.lineSequence().any { it.trim().startsWith("#EXT-X-STREAM-INF:", ignoreCase = true) }
 
-fun parseSingleVariantMasterManifest(
+fun parseMasterManifest(
     manifest: String,
     manifestUrl: String,
-): SingleVariantMasterPlaylist? {
+): HlsMasterPlaylist? {
     val mediaTracks = manifest.lineSequence()
         .map { it.trim() }
         .filter { it.startsWith("#EXT-X-MEDIA:", ignoreCase = true) }
@@ -46,28 +63,61 @@ fun parseSingleVariantMasterManifest(
         manifest.lineSequence()
             .map { it.trim() }
             .filter { it.isNotEmpty() }
-            .forEach { line ->
+            .forEachIndexed { index, line ->
                 when {
                     line.startsWith("#EXT-X-STREAM-INF:", ignoreCase = true) -> {
                         pendingAttributes = parseAttributeList(line.substringAfter(":"))
                     }
                     line.startsWith("#") -> Unit
                     pendingAttributes != null -> {
-                        add(pendingAttributes.orEmpty() + ("URI" to URI(manifestUrl).resolve(line).toString()))
+                        val attributes = pendingAttributes.orEmpty()
+                        val resolvedUri = URI(manifestUrl).resolve(line).toString()
+                        add(
+                            HlsVariantStream(
+                                trackId = buildVideoTrackId(
+                                    uri = resolvedUri,
+                                    resolution = attributes["RESOLUTION"],
+                                    bandwidth = attributes["BANDWIDTH"]?.toLongOrNull(),
+                                    index = index,
+                                ),
+                                uri = resolvedUri,
+                                bandwidth = attributes["BANDWIDTH"]?.toLongOrNull(),
+                                averageBandwidth = attributes["AVERAGE-BANDWIDTH"]?.toLongOrNull(),
+                                resolution = attributes["RESOLUTION"],
+                                codecs = attributes["CODECS"],
+                                audioGroupId = attributes["AUDIO"],
+                                subtitleGroupId = attributes["SUBTITLES"],
+                            ),
+                        )
                         pendingAttributes = null
                     }
                 }
             }
     }
-    if (variants.size != 1) return null
+    if (variants.isEmpty()) return null
 
-    val variant = variants.single()
-    val audioGroupId = variant["AUDIO"]
-    val subtitleGroupId = variant["SUBTITLES"]
+    return HlsMasterPlaylist(
+        videoVariants = variants,
+        audioTracks = mediaTracks.filter { it.type == "AUDIO" },
+        subtitleTracks = mediaTracks.filter { it.type == "SUBTITLES" },
+    )
+}
+
+fun parseSingleVariantMasterManifest(
+    manifest: String,
+    manifestUrl: String,
+): SingleVariantMasterPlaylist? {
+    val masterPlaylist = parseMasterManifest(manifest, manifestUrl) ?: return null
+    val variant = masterPlaylist.videoVariants.maxWithOrNull(
+        compareBy<HlsVariantStream>(
+            { it.sessionSelectionBandwidth() },
+            { it.uri },
+        ),
+    ) ?: return null
     return SingleVariantMasterPlaylist(
-        variantUrl = variant.getValue("URI"),
-        audioTracks = mediaTracks.filter { it.type == "AUDIO" && (audioGroupId == null || it.groupId == audioGroupId) },
-        subtitleTracks = mediaTracks.filter { it.type == "SUBTITLES" && (subtitleGroupId == null || it.groupId == subtitleGroupId) },
+        variantUrl = variant.uri,
+        audioTracks = masterPlaylist.audioTracks.filter { variant.audioGroupId == null || it.groupId == variant.audioGroupId },
+        subtitleTracks = masterPlaylist.subtitleTracks.filter { variant.subtitleGroupId == null || it.groupId == variant.subtitleGroupId },
     )
 }
 
@@ -113,6 +163,28 @@ private fun parseAttributeList(raw: String): Map<String, String> =
             val value = match.groupValues[3].ifEmpty { match.groupValues[2].trim('"') }
             key to value
         }
+
+private fun HlsVariantStream.sessionSelectionBandwidth(): Long =
+    averageBandwidth
+        ?: bandwidth
+        ?: -1L
+
+private fun buildVideoTrackId(
+    uri: String,
+    resolution: String?,
+    bandwidth: Long?,
+    index: Int,
+): String {
+    val label = resolution
+        ?: bandwidth?.toString()
+        ?: URI(uri).path.substringAfterLast('/').substringBeforeLast('.', missingDelimiterValue = "")
+    val normalizedLabel = label
+        .lowercase()
+        .replace(Regex("[^a-z0-9]+"), "-")
+        .trim('-')
+        .ifBlank { "variant" }
+    return "video-$normalizedLabel-$index"
+}
 
 private fun String.withBase64Padding(): String {
     val missingPadding = (4 - length % 4) % 4

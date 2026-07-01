@@ -23,8 +23,9 @@ class CoreLocalHlsSessionManifestResolverTest {
 
         val resolved = resolver.resolve("https://example.com/video.m3u8")
 
-        assertEquals("https://example.com/video.m3u8", resolved.videoManifestUrl)
-        assertEquals(manifest, resolved.videoManifestBody)
+        assertEquals("video-main", resolved.primaryVideoTrackId)
+        assertEquals("https://example.com/video.m3u8", resolved.videoTracks.single().manifestUrl)
+        assertEquals(manifest, resolved.videoTracks.single().manifestBody)
         assertTrue(resolved.audioTracks.isEmpty())
         assertTrue(resolved.subtitleTracks.isEmpty())
         assertEquals(null, resolved.masterPlaylist)
@@ -52,7 +53,7 @@ class CoreLocalHlsSessionManifestResolverTest {
 
         val resolved = resolver.resolve("https://example.com/master.m3u8")
 
-        assertEquals("https://example.com/video/index.m3u8", resolved.videoManifestUrl)
+        assertEquals("https://example.com/video/index.m3u8", resolved.videoTracks.single().manifestUrl)
         assertEquals(1, resolved.audioTracks.size)
         assertEquals(1, resolved.subtitleTracks.size)
         assertEquals(SessionAssetKind.AUDIO_SEGMENT, resolved.audioTracks.single().kind)
@@ -63,20 +64,36 @@ class CoreLocalHlsSessionManifestResolverTest {
         assertEquals("ZH", resolved.masterPlaylist?.subtitleTracks?.single()?.name)
     }
 
-    @Test(expected = UnsupportedSessionSourceException::class)
-    fun resolveRejectsMultiVariantMasterPlaylist() {
+    @Test
+    fun resolveSelectsHighestBandwidthVariantFromMultiVariantMasterPlaylist() {
         val resolver = CoreLocalHlsSessionManifestResolver(
-            fetchManifest = {
-                """
-                    #EXTM3U
-                    #EXT-X-STREAM-INF:BANDWIDTH=800000
-                    low/index.m3u8
-                    #EXT-X-STREAM-INF:BANDWIDTH=1600000
-                    high/index.m3u8
-                """.trimIndent()
+            fetchManifest = { url ->
+                when (url) {
+                    "https://example.com/master.m3u8" -> """
+                        #EXTM3U
+                        #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio-low",NAME="Low",LANGUAGE="en",DEFAULT=YES,URI="audio-low/index.m3u8"
+                        #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio-high",NAME="High",LANGUAGE="ja",DEFAULT=YES,URI="audio-high/index.m3u8"
+                        #EXT-X-STREAM-INF:BANDWIDTH=800000,AUDIO="audio-low"
+                        low/index.m3u8
+                        #EXT-X-STREAM-INF:BANDWIDTH=1600000,AUDIO="audio-high"
+                        high/index.m3u8
+                    """.trimIndent()
+                    "https://example.com/low/index.m3u8" -> "#EXTM3U\n#EXTINF:4.0,\nlow-1.ts\n#EXT-X-ENDLIST"
+                    "https://example.com/high/index.m3u8" -> "#EXTM3U\n#EXTINF:4.0,\nhigh-1.ts\n#EXT-X-ENDLIST"
+                    "https://example.com/audio-low/index.m3u8" -> "#EXTM3U\n#EXTINF:4.0,\naudio-low-1.aac\n#EXT-X-ENDLIST"
+                    "https://example.com/audio-high/index.m3u8" -> "#EXTM3U\n#EXTINF:4.0,\naudio-high-1.aac\n#EXT-X-ENDLIST"
+                    else -> error("unexpected manifest fetch: $url")
+                }
             },
         )
 
-        resolver.resolve("https://example.com/master.m3u8")
+        val resolved = resolver.resolve("https://example.com/master.m3u8")
+
+        assertEquals("https://example.com/high/index.m3u8", resolved.videoTracks.first { it.trackId == resolved.primaryVideoTrackId }.manifestUrl)
+        assertEquals(2, resolved.audioTracks.size)
+        assertTrue(resolved.audioTracks.any { it.manifestUrl == "https://example.com/audio-high/index.m3u8" })
+        assertTrue(resolved.audioTracks.any { it.manifestUrl == "https://example.com/audio-low/index.m3u8" })
+        assertEquals(2, resolved.videoTracks.size)
+        assertEquals("High", resolved.masterPlaylist?.audioTracks?.last()?.name)
     }
 }

@@ -23,8 +23,8 @@ internal class CoreLocalHlsSessionAssetStreamer(
         if (settings.upstreamMode == UpstreamMode.RACE_DIRECT_AND_PROXY) return false
         val runtime = prepared.assetRuntime.getOrPut(asset.assetId) { SessionAssetRuntime() }
         synchronized(runtime.lock) {
-            val existing = sessionAssetStore.resolveAsset(prepared.session.sessionId, asset.assetId)
-            if (existing.exists() || runtime.state == SessionAssetState.DOWNLOADING) {
+            val existingLength = sessionAssetStore.assetLength(prepared.session.sessionId, asset.assetId)
+            if (existingLength != null || runtime.state == SessionAssetState.DOWNLOADING) {
                 return false
             }
             runtime.retryCount += 1
@@ -32,10 +32,11 @@ internal class CoreLocalHlsSessionAssetStreamer(
             runtime.lastError = null
         }
         val (source, call) = upstreamClient.openStreamingCall(asset.url)
-        prepared.callTracker.register(call)
         var responseStarted = false
+        var downstreamWriteInProgress = false
         val startedAt = System.nanoTime()
         return try {
+            prepared.callTracker.register(call)
             diagnosticsState.updateCurrentLoadingAsset(
                 assetId = asset.assetId,
                 kind = asset.kind.name,
@@ -68,8 +69,10 @@ internal class CoreLocalHlsSessionAssetStreamer(
                     if (count < 0) break
                     if (count == 0) continue
                     if (firstByteAt == null) firstByteAt = System.nanoTime()
+                    downstreamWriteInProgress = true
                     output.write(buffer, 0, count)
                     output.flush()
+                    downstreamWriteInProgress = false
                     capture.write(buffer, 0, count)
                 }
                 val bytes = if (looksLikeTransportStream(asset.url)) {
@@ -101,20 +104,28 @@ internal class CoreLocalHlsSessionAssetStreamer(
                 true
             }
         } catch (error: Throwable) {
+            val shouldIgnoreFailureDiagnostics = responseStarted && downstreamWriteInProgress
             synchronized(runtime.lock) {
                 runtime.lastElapsedMs = null
                 runtime.lastError = "${error::class.java.simpleName}: ${error.message}"
                 runtime.lastSource = source
-                runtime.state = if (prepared.callTracker.isCancelled()) SessionAssetState.NOT_STARTED else SessionAssetState.FAILED
+                runtime.state =
+                    if (prepared.callTracker.isCancelled() || responseStarted) {
+                        SessionAssetState.NOT_STARTED
+                    } else {
+                        SessionAssetState.FAILED
+                    }
                 runtime.lock.notifyAll()
             }
-            diagnosticsState.onSegmentResult(
-                url = asset.url,
-                source = source,
-                elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt),
-                success = false,
-                fallbackReason = "${error::class.java.simpleName}: ${error.message}",
-            )
+            if (!shouldIgnoreFailureDiagnostics) {
+                diagnosticsState.onSegmentResult(
+                    url = asset.url,
+                    source = source,
+                    elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt),
+                    success = false,
+                    fallbackReason = "${error::class.java.simpleName}: ${error.message}",
+                )
+            }
             diagnosticsState.updateCurrentLoadingAsset(
                 assetId = null,
                 kind = null,
@@ -125,6 +136,8 @@ internal class CoreLocalHlsSessionAssetStreamer(
             if (!responseStarted) {
                 if (error is UpstreamFetchException) {
                     writeText(output, error.statusCode, "text/plain", error.message.orEmpty())
+                } else if (error is java.util.concurrent.CancellationException) {
+                    writeText(output, 410, "text/plain", "Session Gone")
                 } else {
                     writeText(output, 502, "text/plain", "${error::class.java.simpleName}: ${error.message}")
                 }

@@ -1,15 +1,14 @@
 package labs.newrapaw.dlna.probe.ui
 
 import java.net.NetworkInterface
+import java.util.Enumeration
 import java.util.UUID
 import labs.newrapaw.dlna.probe.dlna.DlnaDeviceConfig
+import labs.newrapaw.dlna.probe.platform.resolveNonLoopbackIpv4Address
 
-fun resolveLocalIpAddress(): String =
-    NetworkInterface.getNetworkInterfaces().asSequence()
-        .flatMap { it.inetAddresses.asSequence() }
-        .firstOrNull { !it.isLoopbackAddress && it.hostAddress?.contains(":") == false }
-        ?.hostAddress
-        ?: "unknown"
+fun resolveLocalIpAddress(
+    networkInterfaces: () -> Enumeration<NetworkInterface>? = NetworkInterface::getNetworkInterfaces,
+): String = resolveNonLoopbackIpv4Address(networkInterfaces)
 
 fun buildPublicControlUrl(
     localIpAddress: String,
@@ -17,8 +16,8 @@ fun buildPublicControlUrl(
 ): String =
     localIpAddress.takeIf { it != "unknown" }?.let(publicBaseUrl) ?: "unknown"
 
-fun stableRendererUuid(androidId: String): String =
-    UUID.nameUUIDFromBytes("newrapaw-dlna-$androidId".toByteArray(Charsets.UTF_8)).toString()
+fun stableRendererUuid(installationId: String): String =
+    UUID.nameUUIDFromBytes("newrapaw-dlna-$installationId".toByteArray(Charsets.UTF_8)).toString()
 
 fun buildDlnaDeviceConfig(
     localIpAddress: String,

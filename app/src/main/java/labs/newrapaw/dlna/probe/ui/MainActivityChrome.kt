@@ -5,6 +5,9 @@ import android.view.Gravity
 import android.view.View
 import android.view.Window
 import android.widget.LinearLayout
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.ui.PlayerView
 
 data class MainActivityHomeContent(
@@ -54,13 +57,12 @@ fun applyFullscreenChrome(
     rootView.setPadding(0, 0, 0, 0)
     rootView.gravity = Gravity.NO_GRAVITY
     chromeViews.forEach { it.visibility = View.GONE }
-    window.decorView.systemUiVisibility =
-        View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
-            View.SYSTEM_UI_FLAG_FULLSCREEN or
-            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
-            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
-            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
-            View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+    WindowCompat.setDecorFitsSystemWindows(window, false)
+    WindowInsetsControllerCompat(window, window.decorView).apply {
+        systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        hide(WindowInsetsCompat.Type.systemBars())
+    }
+    playerView.requestFocus()
 }
 
 fun restoreWindowedChrome(
@@ -68,10 +70,13 @@ fun restoreWindowedChrome(
     playerView: PlayerView,
     chromeViews: List<View>,
     window: Window,
+    focusTarget: View? = null,
 ) {
     playerView.visibility = View.GONE
     rootView.gravity = Gravity.CENTER_VERTICAL
     rootView.setPadding(32, 32, 48, 32)
     chromeViews.forEach { it.visibility = View.VISIBLE }
-    window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
+    WindowCompat.setDecorFitsSystemWindows(window, true)
+    WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
+    focusTarget?.requestFocus()
 }

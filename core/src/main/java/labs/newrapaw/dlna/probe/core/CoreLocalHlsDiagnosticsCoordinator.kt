@@ -30,23 +30,24 @@ internal class CoreLocalHlsDiagnosticsCoordinator(
 
     fun clearActiveSessionCache() {
         playbackRuntime.clearActiveSessionCache()
-        refreshSnapshot()
+        diagnosticsState.clearPreparedSessionDiagnostics()
     }
 
     fun updatePrefetchConcurrency(prefetchConcurrency: Int) {
-        playbackRuntime.activePreparedSession()?.prefetchController?.updateConcurrency(prefetchConcurrency)
+        playbackRuntime.snapshot().activePreparedSession?.prefetchController?.updateConcurrency(prefetchConcurrency)
         diagnosticsState.setUpstreamSettings(proxySettingsStore.load())
         refreshSnapshot()
     }
 
     fun refreshSnapshot() {
+        val runtimeSnapshot = playbackRuntime.snapshot()
         refreshPreparedSessionDiagnostics(
-            activePreparedSession = playbackRuntime.activePreparedSession(),
+            activePreparedSession = runtimeSnapshot.activePreparedSession,
             diagnosticsState = diagnosticsState,
             proxySettingsState = proxySettingsStore.load(),
-            latestPlayerPositionMs = playbackRuntime.latestPlayerPositionMs(),
-            latestBufferedPositionMs = playbackRuntime.latestBufferedPositionMs(),
-            playerIsLoading = diagnosticsState.snapshot().playerIsLoading ?: false,
+            latestPlayerPositionMs = runtimeSnapshot.latestPlayerPositionMs,
+            latestBufferedPositionMs = runtimeSnapshot.latestBufferedPositionMs,
+            playerIsLoading = diagnosticsState.playerIsLoading() ?: false,
         )
     }
 }

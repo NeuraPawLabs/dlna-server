@@ -23,7 +23,9 @@ class MainActivityFullscreenTest {
         assertTrue(activitySource.contains("restoreWindowedChrome("))
         assertTrue(helperSource.contains("chromeViews.forEach { it.visibility = View.GONE }"))
         assertTrue(helperSource.contains("chromeViews.forEach { it.visibility = View.VISIBLE }"))
-        assertTrue(helperSource.contains("View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY"))
+        assertTrue(helperSource.contains("WindowInsetsControllerCompat"))
+        assertTrue(helperSource.contains("WindowInsetsCompat.Type.systemBars()"))
+        assertTrue(helperSource.contains("playerView.requestFocus()"))
     }
 
     @Test

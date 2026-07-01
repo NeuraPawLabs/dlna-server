@@ -5,6 +5,7 @@ import okhttp3.Dispatcher
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayOutputStream
@@ -12,6 +13,7 @@ import java.io.File
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.InetSocketAddress
+import java.net.SocketException
 import java.net.Socket
 import java.net.URL
 import java.nio.file.Files
@@ -24,6 +26,44 @@ import java.util.concurrent.atomic.AtomicInteger
 import com.sun.net.httpserver.HttpServer
 
 class CoreLocalHlsProxyTest {
+    @Test
+    fun componentsDoNotCreateProxyServerWhenHttpServingIsDisabled() {
+        val components = CoreLocalHlsProxyComponents(
+            client = OkHttpClient(),
+            proxySettingsStore = InMemoryProxySettingsStore(),
+            sessionAssetRootDir = Files.createTempDirectory("core-proxy-components").toFile(),
+            serveHttp = false,
+            safeLog = {},
+            shouldSuppressRequestFailureLog = { false },
+        )
+
+        try {
+            assertNull(components.proxyServer)
+        } finally {
+            components.close()
+        }
+    }
+
+    @Test
+    fun connectionResetByPeerIsNotLoggedAsRequestFailure() {
+        val proxy = CoreLocalHlsProxy(
+            client = OkHttpClient(),
+            log = {},
+        )
+
+        proxy.start()
+        try {
+            val method = CoreLocalHlsProxy::class.java.getDeclaredMethod("shouldSuppressRequestFailureLog", Throwable::class.java)
+            method.isAccessible = true
+
+            val suppressed = method.invoke(proxy, SocketException("Connection reset by peer")) as Boolean
+
+            assertTrue(suppressed)
+        } finally {
+            proxy.close()
+        }
+    }
+
     @Test
     fun embeddedProxyCanServeSessionRoutesWithoutStartingCoreHttpServer() {
         val upstream = HttpServer.create(InetSocketAddress(0), 0).apply {
@@ -110,6 +150,89 @@ class CoreLocalHlsProxyTest {
             assertTrue(session.localManifestUrl.contains("/session/${session.sessionId}/manifest.m3u8"))
         } finally {
             proxy.close()
+        }
+    }
+
+    @Test
+    fun multiVariantMasterManifestPreservesMultipleLocalVideoVariants() {
+        val upstream = HttpServer.create(InetSocketAddress(0), 0).apply {
+            executor = Executors.newCachedThreadPool()
+        }
+        upstream.createContext("/master.m3u8") { exchange ->
+            val body = """
+                #EXTM3U
+                #EXT-X-STREAM-INF:BANDWIDTH=800000
+                low/index.m3u8
+                #EXT-X-STREAM-INF:BANDWIDTH=1600000
+                high/index.m3u8
+            """.trimIndent().toByteArray()
+            exchange.responseHeaders.add("Content-Type", "application/vnd.apple.mpegurl")
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        upstream.createContext("/low/index.m3u8") { exchange ->
+            val body = """
+                #EXTM3U
+                #EXTINF:4.0,
+                low-1.ts
+                #EXT-X-ENDLIST
+            """.trimIndent().toByteArray()
+            exchange.responseHeaders.add("Content-Type", "application/vnd.apple.mpegurl")
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        upstream.createContext("/high/index.m3u8") { exchange ->
+            val body = """
+                #EXTM3U
+                #EXTINF:4.0,
+                high-1.ts
+                #EXT-X-ENDLIST
+            """.trimIndent().toByteArray()
+            exchange.responseHeaders.add("Content-Type", "application/vnd.apple.mpegurl")
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        upstream.createContext("/low/low-1.ts") { exchange ->
+            val body = "low-segment".toByteArray()
+            exchange.responseHeaders.add("Content-Type", "video/mp2t")
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        upstream.createContext("/high/high-1.ts") { exchange ->
+            val body = "high-segment".toByteArray()
+            exchange.responseHeaders.add("Content-Type", "video/mp2t")
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        upstream.start()
+
+        val sessionAssetRootDir = Files.createTempDirectory("core-proxy-test").toFile()
+        val proxy = CoreLocalHlsProxy(
+            client = OkHttpClient(),
+            log = {},
+            sessionAssetRootDir = sessionAssetRootDir,
+        )
+
+        proxy.start()
+        try {
+            val session = proxy.openSession("http://127.0.0.1:${upstream.address.port}/master.m3u8")
+            val masterResponse = URL(session.localManifestUrl).openConnection() as HttpURLConnection
+            masterResponse.connectTimeout = 5_000
+            masterResponse.readTimeout = 5_000
+
+            assertEquals(200, masterResponse.responseCode)
+            val localMaster = masterResponse.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+            val localVariantPaths = Regex("""/session/[^"\n]+/video/[^"\n]+\.m3u8""")
+                .findAll(localMaster)
+                .map { it.value }
+                .toList()
+
+            assertEquals(2, localVariantPaths.size)
+            assertTrue(localVariantPaths.distinct().size == 2)
+        } finally {
+            proxy.close()
+            upstream.stop(0)
+            sessionAssetRootDir.deleteRecursively()
         }
     }
 
@@ -775,6 +898,337 @@ class CoreLocalHlsProxyTest {
     }
 
     @Test
+    fun clearActiveSessionCacheResetsPreparedSessionDiagnostics() {
+        val upstream = HttpServer.create(InetSocketAddress(0), 0).apply {
+            executor = Executors.newCachedThreadPool()
+        }
+        upstream.createContext("/video.m3u8") { exchange ->
+            val body = """
+                #EXTM3U
+                #EXTINF:4.0,
+                segment-0.ts
+                #EXT-X-ENDLIST
+            """.trimIndent().toByteArray()
+            exchange.responseHeaders.add("Content-Type", "application/vnd.apple.mpegurl")
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        upstream.createContext("/segment-0.ts") { exchange ->
+            val body = "segment-0".toByteArray()
+            exchange.responseHeaders.add("Content-Type", "video/mp2t")
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        upstream.start()
+
+        val sessionAssetRootDir = Files.createTempDirectory("core-proxy-test").toFile()
+        val proxy = CoreLocalHlsProxy(
+            client = OkHttpClient(),
+            log = {},
+            proxySettingsStore = InMemoryProxySettingsStore(
+                ProxySettingsState(prefetchConcurrency = 1),
+            ),
+            sessionAssetRootDir = sessionAssetRootDir,
+        )
+
+        proxy.start()
+        try {
+            val session = proxy.openSession("http://127.0.0.1:${upstream.address.port}/video.m3u8")
+            val response = URL("${session.localManifestUrl.substringBeforeLast("/")}/asset/video-0.ts").openConnection() as HttpURLConnection
+            response.connectTimeout = 5_000
+            response.readTimeout = 5_000
+            assertEquals(200, response.responseCode)
+            response.inputStream.use { it.readBytes() }
+
+            eventually(emptyList()) {
+                val snapshot = proxy.diagnosticsSnapshot()
+                assertEquals(1, snapshot.sessionReadyAssetCount)
+                assertEquals(1, snapshot.sessionTotalAssetCount)
+                assertTrue(snapshot.sessionReadyBytes > 0L)
+            }
+
+            proxy.clearActiveSessionCache()
+
+            val cleared = proxy.diagnosticsSnapshot()
+            assertEquals(0, cleared.sessionReadyAssetCount)
+            assertEquals(0, cleared.sessionTotalAssetCount)
+            assertEquals(0L, cleared.sessionReadyBytes)
+            assertEquals(0, cleared.pendingPrefetchCount)
+            assertEquals(0, cleared.inFlightCount)
+            assertEquals(null, cleared.currentLoadingAssetId)
+        } finally {
+            proxy.close()
+            upstream.stop(0)
+            sessionAssetRootDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun truncatedHttpHeadersReturn400InsteadOfServingSessionRoute() {
+        val upstream = HttpServer.create(InetSocketAddress(0), 0).apply {
+            executor = Executors.newCachedThreadPool()
+        }
+        upstream.createContext("/video.m3u8") { exchange ->
+            val body = """
+                #EXTM3U
+                #EXTINF:1.0,
+                /segment-0.ts
+                #EXT-X-ENDLIST
+            """.trimIndent().toByteArray()
+            exchange.responseHeaders.add("Content-Type", "application/vnd.apple.mpegurl")
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        upstream.createContext("/segment-0.ts") { exchange ->
+            val body = "segment-0".toByteArray()
+            exchange.responseHeaders.add("Content-Type", "video/mp2t")
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        upstream.start()
+
+        val proxy = CoreLocalHlsProxy(
+            client = OkHttpClient(),
+            log = {},
+        )
+
+        proxy.start()
+        try {
+            val session = proxy.openSession("http://127.0.0.1:${upstream.address.port}/video.m3u8")
+            val requestPath = java.net.URI(session.localManifestUrl).path
+
+            val responseText = Socket("127.0.0.1", proxy.port).use { socket ->
+                socket.soTimeout = 5_000
+                val output = socket.getOutputStream()
+                output.write("GET $requestPath HTTP/1.1\r\nHost: 127.0.0.1\r\n".toByteArray())
+                output.flush()
+                socket.shutdownOutput()
+                socket.getInputStream().use { it.readBytes() }.toString(Charsets.ISO_8859_1)
+            }
+
+            assertTrue(responseText.startsWith("HTTP/1.1 400"))
+        } finally {
+            proxy.close()
+            upstream.stop(0)
+        }
+    }
+
+    @Test
+    fun malformedHttpHeaderLineReturns400InsteadOfServingSessionRoute() {
+        val upstream = HttpServer.create(InetSocketAddress(0), 0).apply {
+            executor = Executors.newCachedThreadPool()
+        }
+        upstream.createContext("/video.m3u8") { exchange ->
+            val body = """
+                #EXTM3U
+                #EXTINF:1.0,
+                /segment-0.ts
+                #EXT-X-ENDLIST
+            """.trimIndent().toByteArray()
+            exchange.responseHeaders.add("Content-Type", "application/vnd.apple.mpegurl")
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        upstream.createContext("/segment-0.ts") { exchange ->
+            val body = "segment-0".toByteArray()
+            exchange.responseHeaders.add("Content-Type", "video/mp2t")
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        upstream.start()
+
+        val proxy = CoreLocalHlsProxy(
+            client = OkHttpClient(),
+            log = {},
+        )
+
+        proxy.start()
+        try {
+            val session = proxy.openSession("http://127.0.0.1:${upstream.address.port}/video.m3u8")
+            val requestPath = java.net.URI(session.localManifestUrl).path
+
+            val responseText = Socket("127.0.0.1", proxy.port).use { socket ->
+                socket.soTimeout = 5_000
+                val output = socket.getOutputStream()
+                output.write(
+                    "GET $requestPath HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Bad-Header\r\n\r\n".toByteArray(),
+                )
+                output.flush()
+                socket.shutdownOutput()
+                socket.getInputStream().use { it.readBytes() }.toString(Charsets.ISO_8859_1)
+            }
+
+            assertTrue(responseText.startsWith("HTTP/1.1 400"))
+        } finally {
+            proxy.close()
+            upstream.stop(0)
+        }
+    }
+
+    @Test
+    fun malformedRequestLineReturns400InsteadOfServingSessionRoute() {
+        val upstream = HttpServer.create(InetSocketAddress(0), 0).apply {
+            executor = Executors.newCachedThreadPool()
+        }
+        upstream.createContext("/video.m3u8") { exchange ->
+            val body = """
+                #EXTM3U
+                #EXTINF:1.0,
+                /segment-0.ts
+                #EXT-X-ENDLIST
+            """.trimIndent().toByteArray()
+            exchange.responseHeaders.add("Content-Type", "application/vnd.apple.mpegurl")
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        upstream.createContext("/segment-0.ts") { exchange ->
+            val body = "segment-0".toByteArray()
+            exchange.responseHeaders.add("Content-Type", "video/mp2t")
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        upstream.start()
+
+        val proxy = CoreLocalHlsProxy(
+            client = OkHttpClient(),
+            log = {},
+        )
+
+        proxy.start()
+        try {
+            val session = proxy.openSession("http://127.0.0.1:${upstream.address.port}/video.m3u8")
+            val requestPath = java.net.URI(session.localManifestUrl).path
+
+            val responseText = Socket("127.0.0.1", proxy.port).use { socket ->
+                socket.soTimeout = 5_000
+                val output = socket.getOutputStream()
+                output.write("GET $requestPath\r\nHost: 127.0.0.1\r\n\r\n".toByteArray())
+                output.flush()
+                socket.shutdownOutput()
+                socket.getInputStream().use { it.readBytes() }.toString(Charsets.ISO_8859_1)
+            }
+
+            assertTrue(responseText.startsWith("HTTP/1.1 400"))
+        } finally {
+            proxy.close()
+            upstream.stop(0)
+        }
+    }
+
+    @Test
+    fun duplicateContentLengthReturns400InsteadOfServingSessionRoute() {
+        val upstream = HttpServer.create(InetSocketAddress(0), 0).apply {
+            executor = Executors.newCachedThreadPool()
+        }
+        upstream.createContext("/video.m3u8") { exchange ->
+            val body = """
+                #EXTM3U
+                #EXTINF:1.0,
+                /segment-0.ts
+                #EXT-X-ENDLIST
+            """.trimIndent().toByteArray()
+            exchange.responseHeaders.add("Content-Type", "application/vnd.apple.mpegurl")
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        upstream.createContext("/segment-0.ts") { exchange ->
+            val body = "segment-0".toByteArray()
+            exchange.responseHeaders.add("Content-Type", "video/mp2t")
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        upstream.start()
+
+        val proxy = CoreLocalHlsProxy(
+            client = OkHttpClient(),
+            log = {},
+        )
+
+        proxy.start()
+        try {
+            val session = proxy.openSession("http://127.0.0.1:${upstream.address.port}/video.m3u8")
+            val requestPath = java.net.URI(session.localManifestUrl).path
+
+            val responseText = Socket("127.0.0.1", proxy.port).use { socket ->
+                socket.soTimeout = 5_000
+                val output = socket.getOutputStream()
+                output.write(
+                    (
+                        "GET $requestPath HTTP/1.1\r\n" +
+                            "Host: 127.0.0.1\r\n" +
+                            "Content-Length: nope\r\n" +
+                            "Content-Length: 0\r\n\r\n"
+                        ).toByteArray(),
+                )
+                output.flush()
+                socket.shutdownOutput()
+                socket.getInputStream().use { it.readBytes() }.toString(Charsets.ISO_8859_1)
+            }
+
+            assertTrue(responseText.startsWith("HTTP/1.1 400"))
+        } finally {
+            proxy.close()
+            upstream.stop(0)
+        }
+    }
+
+    @Test
+    fun invalidContentLengthReturns400InsteadOfServingSessionRoute() {
+        val upstream = HttpServer.create(InetSocketAddress(0), 0).apply {
+            executor = Executors.newCachedThreadPool()
+        }
+        upstream.createContext("/video.m3u8") { exchange ->
+            val body = """
+                #EXTM3U
+                #EXTINF:1.0,
+                /segment-0.ts
+                #EXT-X-ENDLIST
+            """.trimIndent().toByteArray()
+            exchange.responseHeaders.add("Content-Type", "application/vnd.apple.mpegurl")
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        upstream.createContext("/segment-0.ts") { exchange ->
+            val body = "segment-0".toByteArray()
+            exchange.responseHeaders.add("Content-Type", "video/mp2t")
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        upstream.start()
+
+        val proxy = CoreLocalHlsProxy(
+            client = OkHttpClient(),
+            log = {},
+        )
+
+        proxy.start()
+        try {
+            val session = proxy.openSession("http://127.0.0.1:${upstream.address.port}/video.m3u8")
+            val requestPath = java.net.URI(session.localManifestUrl).path
+
+            val responseText = Socket("127.0.0.1", proxy.port).use { socket ->
+                socket.soTimeout = 5_000
+                val output = socket.getOutputStream()
+                output.write(
+                    (
+                        "GET $requestPath HTTP/1.1\r\n" +
+                            "Host: 127.0.0.1\r\n" +
+                            "Content-Length: nope\r\n\r\n"
+                        ).toByteArray(),
+                )
+                output.flush()
+                socket.shutdownOutput()
+                socket.getInputStream().use { it.readBytes() }.toString(Charsets.ISO_8859_1)
+            }
+
+            assertTrue(responseText.startsWith("HTTP/1.1 400"))
+        } finally {
+            proxy.close()
+            upstream.stop(0)
+        }
+    }
+
+    @Test
     fun headRequestForSessionAssetReturnsHeadersWithoutBody() {
         val upstream = HttpServer.create(InetSocketAddress(0), 0).apply {
             executor = Executors.newCachedThreadPool()
@@ -818,12 +1272,11 @@ class CoreLocalHlsProxyTest {
             socket.soTimeout = 5_000
             val output = socket.getOutputStream()
             output.write(
-                """
-                HEAD /session/${session.sessionId}/asset/video-0.ts HTTP/1.1
-                Host: 127.0.0.1
-                Connection: close
-                
-                """.trimIndent().replace("\n", "\r\n").toByteArray(),
+                (
+                    "HEAD /session/${session.sessionId}/asset/video-0.ts HTTP/1.1\r\n" +
+                    "Host: 127.0.0.1\r\n" +
+                    "Connection: close\r\n\r\n"
+                    ).toByteArray(),
             )
             output.flush()
             socket.shutdownOutput()

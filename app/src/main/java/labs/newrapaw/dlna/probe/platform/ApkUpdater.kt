@@ -6,6 +6,7 @@ import androidx.core.content.FileProvider
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.util.concurrent.TimeUnit
 import java.util.zip.ZipException
 import java.util.zip.ZipInputStream
 
@@ -14,11 +15,13 @@ class ApkUpdater(
     private val client: OkHttpClient = OkHttpClient(),
     private val log: (String) -> Unit,
 ) {
+    private val downloadClient = buildApkDownloadClient(client)
+
     fun downloadAndLaunchInstaller(apkUrl: String) {
         Thread {
             runCatching {
                 log("Downloading APK: $apkUrl")
-                val response = client.newCall(Request.Builder().url(apkUrl).build()).execute()
+                val response = downloadClient.newCall(Request.Builder().url(apkUrl).build()).execute()
                 response.use {
                     check(it.isSuccessful) { "APK download failed: HTTP ${it.code}" }
                     val bytes = it.body?.bytes() ?: ByteArray(0)
@@ -52,6 +55,16 @@ class ApkUpdater(
     }
 }
 
+internal fun buildApkDownloadClient(client: OkHttpClient): OkHttpClient {
+    val existingCallTimeoutMs = client.callTimeoutMillis.toLong()
+    if (existingCallTimeoutMs in 1..APK_DOWNLOAD_CALL_TIMEOUT_MS) {
+        return client
+    }
+    return client.newBuilder()
+        .callTimeout(APK_DOWNLOAD_CALL_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .build()
+}
+
 internal fun validateApkDownload(bytes: ByteArray): String? {
     if (bytes.isEmpty()) return "APK download returned empty body"
 
@@ -73,3 +86,5 @@ internal fun validateApkDownload(bytes: ByteArray): String? {
         "Downloaded file is not an APK. Check that the URL points directly to an .apk file."
     }
 }
+
+private const val APK_DOWNLOAD_CALL_TIMEOUT_MS = 15_000L

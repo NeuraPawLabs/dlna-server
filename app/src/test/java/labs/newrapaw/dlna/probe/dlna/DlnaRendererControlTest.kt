@@ -34,7 +34,7 @@ class DlnaRendererControlTest {
     }
 
     @Test
-    fun getTransportInfoReportsPlayingAfterPlay() {
+    fun getTransportInfoReportsTransitioningUntilPlayerStateSyncArrives() {
         val renderer = DlnaRendererController(
             log = {},
             onPlayRequested = {},
@@ -59,7 +59,7 @@ class DlnaRendererControlTest {
         )
 
         assertEquals(200, response.statusCode)
-        assertTrue(response.body.contains("<CurrentTransportState>PLAYING</CurrentTransportState>"))
+        assertTrue(response.body.contains("<CurrentTransportState>TRANSITIONING</CurrentTransportState>"))
         assertTrue(response.body.contains("<CurrentTransportStatus>OK</CurrentTransportStatus>"))
     }
 
@@ -128,6 +128,61 @@ class DlnaRendererControlTest {
         assertEquals(200, stop.statusCode)
         assertEquals(1, pauses)
         assertEquals(1, stops)
+        assertTrue(pausedInfo.body.contains("<CurrentTransportState>TRANSITIONING</CurrentTransportState>"))
+        assertTrue(stoppedInfo.body.contains("<CurrentTransportState>TRANSITIONING</CurrentTransportState>"))
+    }
+
+    @Test
+    fun pauseAndStopReachFinalStateAfterPlayerStateSync() {
+        val renderer = DlnaRendererController(
+            log = {},
+            onPlayRequested = {},
+            onStopRequested = {},
+            onPauseRequested = {},
+        )
+        renderer.handleControlRequest(
+            serviceName = "AVTransport",
+            soapActionHeader = "\"urn:schemas-upnp-org:service:AVTransport:1#SetAVTransportURI\"",
+            body = soapAction("SetAVTransportURI", "CurrentURI" to "https://example/video.mp4"),
+        )
+        renderer.handleControlRequest(
+            serviceName = "AVTransport",
+            soapActionHeader = "\"urn:schemas-upnp-org:service:AVTransport:1#Play\"",
+            body = soapAction("Play"),
+        )
+
+        renderer.handleControlRequest(
+            serviceName = "AVTransport",
+            soapActionHeader = "\"urn:schemas-upnp-org:service:AVTransport:1#Pause\"",
+            body = soapAction("Pause"),
+        )
+        renderer.syncPlayerState(
+            transportState = "PAUSED_PLAYBACK",
+            transportStatus = "OK",
+            positionMs = 42_000L,
+        )
+        val pausedInfo = renderer.handleControlRequest(
+            serviceName = "AVTransport",
+            soapActionHeader = "\"urn:schemas-upnp-org:service:AVTransport:1#GetTransportInfo\"",
+            body = soapAction("GetTransportInfo"),
+        )
+
+        renderer.handleControlRequest(
+            serviceName = "AVTransport",
+            soapActionHeader = "\"urn:schemas-upnp-org:service:AVTransport:1#Stop\"",
+            body = soapAction("Stop"),
+        )
+        renderer.syncPlayerState(
+            transportState = "STOPPED",
+            transportStatus = "OK",
+            positionMs = 0L,
+        )
+        val stoppedInfo = renderer.handleControlRequest(
+            serviceName = "AVTransport",
+            soapActionHeader = "\"urn:schemas-upnp-org:service:AVTransport:1#GetTransportInfo\"",
+            body = soapAction("GetTransportInfo"),
+        )
+
         assertTrue(pausedInfo.body.contains("<CurrentTransportState>PAUSED_PLAYBACK</CurrentTransportState>"))
         assertTrue(stoppedInfo.body.contains("<CurrentTransportState>STOPPED</CurrentTransportState>"))
     }
@@ -264,6 +319,266 @@ class DlnaRendererControlTest {
         assertTrue(capabilities.body.contains("<PlayMedia>NETWORK</PlayMedia>"))
         assertEquals(200, settings.statusCode)
         assertTrue(settings.body.contains("<PlayMode>NORMAL</PlayMode>"))
+    }
+
+    @Test
+    fun seekInvokesPlaybackSeekCallbackAndUpdatesPositionInfo() {
+        val seeks = mutableListOf<Long>()
+        val renderer = DlnaRendererController(
+            log = {},
+            onPlayRequested = {},
+            onStopRequested = {},
+            onPauseRequested = {},
+            onSeekRequested = { seeks += it },
+        )
+
+        val seek = renderer.handleControlRequest(
+            serviceName = "AVTransport",
+            soapActionHeader = "\"urn:schemas-upnp-org:service:AVTransport:1#Seek\"",
+            body = soapAction("Seek", "Unit" to "REL_TIME", "Target" to "00:01:23"),
+        )
+        val position = renderer.handleControlRequest(
+            serviceName = "AVTransport",
+            soapActionHeader = "\"urn:schemas-upnp-org:service:AVTransport:1#GetPositionInfo\"",
+            body = soapAction("GetPositionInfo"),
+        )
+
+        assertEquals(200, seek.statusCode)
+        assertEquals(listOf(83_000L), seeks)
+        assertTrue(position.body.contains("<RelTime>00:01:23</RelTime>"))
+        assertTrue(position.body.contains("<AbsTime>00:01:23</AbsTime>"))
+    }
+
+    @Test
+    fun seekAcceptsFractionalSecondTarget() {
+        val seeks = mutableListOf<Long>()
+        val renderer = DlnaRendererController(
+            log = {},
+            onPlayRequested = {},
+            onStopRequested = {},
+            onPauseRequested = {},
+            onSeekRequested = { seeks += it },
+        )
+
+        val seek = renderer.handleControlRequest(
+            serviceName = "AVTransport",
+            soapActionHeader = "\"urn:schemas-upnp-org:service:AVTransport:1#Seek\"",
+            body = soapAction("Seek", "Unit" to "REL_TIME", "Target" to "00:01:23.500"),
+        )
+        val position = renderer.handleControlRequest(
+            serviceName = "AVTransport",
+            soapActionHeader = "\"urn:schemas-upnp-org:service:AVTransport:1#GetPositionInfo\"",
+            body = soapAction("GetPositionInfo"),
+        )
+
+        assertEquals(200, seek.statusCode)
+        assertEquals(listOf(83_500L), seeks)
+        assertTrue(position.body.contains("<RelTime>00:01:23.500</RelTime>"))
+        assertTrue(position.body.contains("<AbsTime>00:01:23.500</AbsTime>"))
+    }
+
+    @Test
+    fun invalidSeekTargetReturnsSoapFaultWithoutChangingPosition() {
+        val seeks = mutableListOf<Long>()
+        val renderer = DlnaRendererController(
+            log = {},
+            onPlayRequested = {},
+            onStopRequested = {},
+            onPauseRequested = {},
+            onSeekRequested = { seeks += it },
+        )
+        renderer.syncPlayerPosition(15_000L)
+
+        val seek = renderer.handleControlRequest(
+            serviceName = "AVTransport",
+            soapActionHeader = "\"urn:schemas-upnp-org:service:AVTransport:1#Seek\"",
+            body = soapAction("Seek", "Unit" to "REL_TIME", "Target" to "invalid-time"),
+        )
+        val position = renderer.handleControlRequest(
+            serviceName = "AVTransport",
+            soapActionHeader = "\"urn:schemas-upnp-org:service:AVTransport:1#GetPositionInfo\"",
+            body = soapAction("GetPositionInfo"),
+        )
+
+        assertEquals(500, seek.statusCode)
+        assertTrue(seek.body.contains("Invalid seek target"))
+        assertTrue(seeks.isEmpty())
+        assertTrue(position.body.contains("<RelTime>00:00:15</RelTime>"))
+    }
+
+    @Test
+    fun outOfRangeSeekTargetReturnsSoapFaultWithoutChangingPosition() {
+        val seeks = mutableListOf<Long>()
+        val renderer = DlnaRendererController(
+            log = {},
+            onPlayRequested = {},
+            onStopRequested = {},
+            onPauseRequested = {},
+            onSeekRequested = { seeks += it },
+        )
+        renderer.syncPlayerPosition(15_000L)
+
+        val seek = renderer.handleControlRequest(
+            serviceName = "AVTransport",
+            soapActionHeader = "\"urn:schemas-upnp-org:service:AVTransport:1#Seek\"",
+            body = soapAction("Seek", "Unit" to "REL_TIME", "Target" to "00:61:00"),
+        )
+        val position = renderer.handleControlRequest(
+            serviceName = "AVTransport",
+            soapActionHeader = "\"urn:schemas-upnp-org:service:AVTransport:1#GetPositionInfo\"",
+            body = soapAction("GetPositionInfo"),
+        )
+
+        assertEquals(500, seek.statusCode)
+        assertTrue(seek.body.contains("Invalid seek target"))
+        assertTrue(seeks.isEmpty())
+        assertTrue(position.body.contains("<RelTime>00:00:15</RelTime>"))
+    }
+
+    @Test
+    fun absTimeSeekUsesSamePlaybackSeekPath() {
+        val seeks = mutableListOf<Long>()
+        val renderer = DlnaRendererController(
+            log = {},
+            onPlayRequested = {},
+            onStopRequested = {},
+            onPauseRequested = {},
+            onSeekRequested = { seeks += it },
+        )
+
+        val seek = renderer.handleControlRequest(
+            serviceName = "AVTransport",
+            soapActionHeader = "\"urn:schemas-upnp-org:service:AVTransport:1#Seek\"",
+            body = soapAction("Seek", "Unit" to "ABS_TIME", "Target" to "00:02:05"),
+        )
+        val position = renderer.handleControlRequest(
+            serviceName = "AVTransport",
+            soapActionHeader = "\"urn:schemas-upnp-org:service:AVTransport:1#GetPositionInfo\"",
+            body = soapAction("GetPositionInfo"),
+        )
+
+        assertEquals(200, seek.statusCode)
+        assertEquals(listOf(125_000L), seeks)
+        assertTrue(position.body.contains("<RelTime>00:02:05</RelTime>"))
+    }
+
+    @Test
+    fun seekCallbackFailureReturnsSoapFaultWithoutChangingPosition() {
+        val renderer = DlnaRendererController(
+            log = {},
+            onPlayRequested = {},
+            onStopRequested = {},
+            onPauseRequested = {},
+            onSeekRequested = { error("seek exploded") },
+        )
+        renderer.syncPlayerPosition(15_000L)
+
+        val seek = renderer.handleControlRequest(
+            serviceName = "AVTransport",
+            soapActionHeader = "\"urn:schemas-upnp-org:service:AVTransport:1#Seek\"",
+            body = soapAction("Seek", "Unit" to "REL_TIME", "Target" to "00:01:23"),
+        )
+        val position = renderer.handleControlRequest(
+            serviceName = "AVTransport",
+            soapActionHeader = "\"urn:schemas-upnp-org:service:AVTransport:1#GetPositionInfo\"",
+            body = soapAction("GetPositionInfo"),
+        )
+
+        assertEquals(500, seek.statusCode)
+        assertTrue(seek.body.contains("seek exploded"))
+        assertTrue(position.body.contains("<RelTime>00:00:15</RelTime>"))
+    }
+
+    @Test
+    fun playerStateSyncUpdatesReportedTransportStateAndPosition() {
+        val renderer = DlnaRendererController(
+            log = {},
+            onPlayRequested = {},
+            onStopRequested = {},
+            onPauseRequested = {},
+        )
+
+        renderer.syncPlayerState(
+            transportState = "PLAYING",
+            transportStatus = "OK",
+            positionMs = 65_000L,
+        )
+
+        val transport = renderer.handleControlRequest(
+            serviceName = "AVTransport",
+            soapActionHeader = "\"urn:schemas-upnp-org:service:AVTransport:1#GetTransportInfo\"",
+            body = soapAction("GetTransportInfo"),
+        )
+        val position = renderer.handleControlRequest(
+            serviceName = "AVTransport",
+            soapActionHeader = "\"urn:schemas-upnp-org:service:AVTransport:1#GetPositionInfo\"",
+            body = soapAction("GetPositionInfo"),
+        )
+
+        assertTrue(transport.body.contains("<CurrentTransportState>PLAYING</CurrentTransportState>"))
+        assertTrue(position.body.contains("<RelTime>00:01:05</RelTime>"))
+    }
+
+    @Test
+    fun playerStateSyncUpdatesReportedMediaAndTrackDuration() {
+        val renderer = DlnaRendererController(
+            log = {},
+            onPlayRequested = {},
+            onStopRequested = {},
+            onPauseRequested = {},
+        )
+
+        renderer.syncPlayerState(
+            transportState = "PLAYING",
+            transportStatus = "OK",
+            positionMs = 65_000L,
+            durationMs = 185_000L,
+        )
+
+        val mediaInfo = renderer.handleControlRequest(
+            serviceName = "AVTransport",
+            soapActionHeader = "\"urn:schemas-upnp-org:service:AVTransport:1#GetMediaInfo\"",
+            body = soapAction("GetMediaInfo"),
+        )
+        val position = renderer.handleControlRequest(
+            serviceName = "AVTransport",
+            soapActionHeader = "\"urn:schemas-upnp-org:service:AVTransport:1#GetPositionInfo\"",
+            body = soapAction("GetPositionInfo"),
+        )
+
+        assertTrue(mediaInfo.body.contains("<MediaDuration>00:03:05</MediaDuration>"))
+        assertTrue(position.body.contains("<TrackDuration>00:03:05</TrackDuration>"))
+    }
+
+    @Test
+    fun playerPositionSyncUpdatesReportedPositionWithoutChangingTransportState() {
+        val renderer = DlnaRendererController(
+            log = {},
+            onPlayRequested = {},
+            onStopRequested = {},
+            onPauseRequested = {},
+        )
+        val syncMethod = DlnaRendererController::class.java.methods.firstOrNull {
+            it.name == "syncPlayerPosition" &&
+                it.parameterCount == 1 &&
+                it.parameterTypes.single() == java.lang.Long.TYPE
+        }
+        assertTrue("DlnaRendererController.syncPlayerPosition(Long) should exist", syncMethod != null)
+        syncMethod!!.invoke(renderer, 83_000L)
+
+        val transport = renderer.handleControlRequest(
+            serviceName = "AVTransport",
+            soapActionHeader = "\"urn:schemas-upnp-org:service:AVTransport:1#GetTransportInfo\"",
+            body = soapAction("GetTransportInfo"),
+        )
+        val position = renderer.handleControlRequest(
+            serviceName = "AVTransport",
+            soapActionHeader = "\"urn:schemas-upnp-org:service:AVTransport:1#GetPositionInfo\"",
+            body = soapAction("GetPositionInfo"),
+        )
+
+        assertTrue(transport.body.contains("<CurrentTransportState>STOPPED</CurrentTransportState>"))
+        assertTrue(position.body.contains("<RelTime>00:01:23</RelTime>"))
     }
 
     private fun soapAction(actionName: String, vararg values: Pair<String, String>): String {

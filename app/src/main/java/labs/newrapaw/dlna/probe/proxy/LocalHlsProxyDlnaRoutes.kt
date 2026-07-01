@@ -2,17 +2,17 @@ package labs.newrapaw.dlna.probe.proxy
 
 import java.io.OutputStream
 import labs.newrapaw.dlna.probe.dlna.DlnaDeviceConfig
+import labs.newrapaw.dlna.probe.dlna.DlnaEventing
 import labs.newrapaw.dlna.probe.dlna.DlnaRendererController
 import labs.newrapaw.dlna.probe.dlna.buildAvTransportScpdXml
 import labs.newrapaw.dlna.probe.dlna.buildConnectionManagerScpdXml
 import labs.newrapaw.dlna.probe.dlna.buildDeviceDescriptionXml
-import labs.newrapaw.dlna.probe.dlna.buildEventSubscribeResponse
-import labs.newrapaw.dlna.probe.dlna.buildEventUnsubscribeResponse
 import labs.newrapaw.dlna.probe.dlna.buildRenderingControlScpdXml
 
 internal class LocalHlsProxyDlnaRoutes(
     private val dlnaConfig: () -> DlnaDeviceConfig?,
     private val renderer: DlnaRendererController,
+    private val eventing: DlnaEventing,
     private val safeLog: (String) -> Unit,
 ) {
     fun handle(
@@ -28,8 +28,8 @@ internal class LocalHlsProxyDlnaRoutes(
             method == "GET" && path == "/upnp/service/RenderingControl.xml" -> respondServiceDescription(output, buildRenderingControlScpdXml())
             method == "GET" && path == "/upnp/service/ConnectionManager.xml" -> respondServiceDescription(output, buildConnectionManagerScpdXml())
             method == "POST" && path.startsWith("/upnp/control/") -> respondControl(path, headers, body, output)
-            method == "SUBSCRIBE" && path.startsWith("/upnp/event/") -> respondSubscribe(path, output)
-            method == "UNSUBSCRIBE" && path.startsWith("/upnp/event/") -> respondUnsubscribe(path, output)
+            method == "SUBSCRIBE" && path.startsWith("/upnp/event/") -> respondSubscribe(path, headers, output)
+            method == "UNSUBSCRIBE" && path.startsWith("/upnp/event/") -> respondUnsubscribe(path, headers, output)
             else -> false
         }
 
@@ -65,15 +65,31 @@ internal class LocalHlsProxyDlnaRoutes(
         return true
     }
 
-    private fun respondSubscribe(path: String, output: OutputStream): Boolean {
-        safeLog("[DLNA] Subscribe: ${path.substringAfterLast("/")}")
-        writeResponse(output, buildEventSubscribeResponse())
+    private fun respondSubscribe(path: String, headers: Map<String, String>, output: OutputStream): Boolean {
+        val serviceName = path.substringAfterLast("/")
+        safeLog("[DLNA] Subscribe: $serviceName")
+        writeResponse(
+            output,
+            eventing.subscribe(
+                serviceName = serviceName,
+                callbackHeader = headers["callback"],
+                timeoutHeader = headers["timeout"],
+                sidHeader = headers["sid"],
+            ),
+        )
         return true
     }
 
-    private fun respondUnsubscribe(path: String, output: OutputStream): Boolean {
-        safeLog("[DLNA] Unsubscribe: ${path.substringAfterLast("/")}")
-        writeResponse(output, buildEventUnsubscribeResponse())
+    private fun respondUnsubscribe(path: String, headers: Map<String, String>, output: OutputStream): Boolean {
+        val serviceName = path.substringAfterLast("/")
+        safeLog("[DLNA] Unsubscribe: $serviceName")
+        writeResponse(
+            output,
+            eventing.unsubscribe(
+                serviceName = serviceName,
+                sidHeader = headers["sid"],
+            ),
+        )
         return true
     }
 }

@@ -1,12 +1,19 @@
 package labs.newrapaw.dlna.probe.core.session
 
-import java.net.URI
-
 data class PlannedTrackManifest(
     val trackId: String,
     val kind: SessionAssetKind,
     val manifestUrl: String,
     val manifestBody: String,
+    val hasEndList: Boolean = true,
+    val groupId: String? = null,
+    val displayName: String? = null,
+    val language: String? = null,
+    val isDefault: Boolean = false,
+    val bandwidth: Long? = null,
+    val averageBandwidth: Long? = null,
+    val resolution: String? = null,
+    val codecs: String? = null,
 )
 
 data class PlannedSessionTimeline(
@@ -16,13 +23,25 @@ data class PlannedSessionTimeline(
 
 class ManifestPlanner {
     fun plan(
-        manifestUrl: String,
-        videoManifest: String,
+        videoTracks: List<PlannedTrackManifest>,
+        primaryVideoTrackId: String,
         audioTracks: List<PlannedTrackManifest>,
         subtitleTracks: List<PlannedTrackManifest>,
     ): PlannedSessionTimeline {
+        val primaryVideoTrack = videoTracks.firstOrNull { it.trackId == primaryVideoTrackId }
+            ?: error("Primary video track not found: $primaryVideoTrackId")
         val assets = mutableListOf<SessionAsset>()
-        val videoEntries = parseMediaEntries(videoManifest, manifestUrl)
+        val videoPlans = videoTracks.associate { track ->
+            track.trackId to parseTrackPlan(
+                trackId = track.trackId,
+                manifestBody = track.manifestBody,
+                manifestUrl = track.manifestUrl,
+                blocking = true,
+                requiredForStartup = true,
+            )
+        }
+        val primaryVideoPlan = videoPlans.getValue(primaryVideoTrackId)
+        val videoEntries = primaryVideoPlan.entries
         val audioEntries = audioTracks.associate { track ->
             track.trackId to parseTrackPlan(
                 trackId = track.trackId,
@@ -42,32 +61,27 @@ class ManifestPlanner {
             )
         }
 
-        parseTrackPlan(
-            trackId = "video-main",
-            manifestBody = videoManifest,
-            manifestUrl = manifestUrl,
-            blocking = true,
-            requiredForStartup = true,
-        ).prerequisiteAssets.forEach { assets += it }
-        val videoPrerequisiteIds = assets.map { it.assetId }
-
-        val audioPrerequisiteIds = mutableMapOf<String, List<String>>()
+        videoTracks.forEach { track ->
+            val prerequisites = videoPlans.getValue(track.trackId).prerequisiteAssets
+            prerequisites.forEach { assets += it }
+        }
         audioEntries.forEach { (trackId, trackPlan) ->
             trackPlan.prerequisiteAssets.forEach { assets += it }
-            audioPrerequisiteIds[trackId] = trackPlan.prerequisiteAssets.map { it.assetId }
         }
-        val subtitlePrerequisiteIds = mutableMapOf<String, List<String>>()
         subtitleEntries.forEach { (trackId, trackPlan) ->
             trackPlan.prerequisiteAssets.forEach { assets += it }
-            subtitlePrerequisiteIds[trackId] = trackPlan.prerequisiteAssets.map { it.assetId }
         }
 
         val slots = videoEntries.mapIndexed { index, entry ->
             val videoId = "video-$index"
+            val videoAssetIdsByTrack = linkedMapOf<String, String>()
+            val videoPrerequisiteAssetIdsByTrack = linkedMapOf<String, List<String>>()
+            val audioPrerequisiteAssetIds = linkedMapOf<String, List<String>>()
+            val subtitlePrerequisiteAssetIds = linkedMapOf<String, List<String>>()
             assets += SessionAsset(
                 assetId = videoId,
                 kind = SessionAssetKind.VIDEO_SEGMENT,
-                trackId = "video-main",
+                trackId = primaryVideoTrack.trackId,
                 url = entry.url,
                 durationMs = entry.durationMs,
                 sequence = index,
@@ -75,6 +89,27 @@ class ManifestPlanner {
                 requiredForStartup = index < 4,
                 localPath = null,
             )
+            videoAssetIdsByTrack[primaryVideoTrackId] = videoId
+            videoPrerequisiteAssetIdsByTrack[primaryVideoTrackId] = entry.prerequisiteAssetIds
+            videoTracks
+                .filterNot { it.trackId == primaryVideoTrackId }
+                .forEach { track ->
+                    val variantEntry = videoPlans.getValue(track.trackId).entries.getOrNull(index) ?: return@forEach
+                    val variantAssetId = "video-${track.trackId}-$index"
+                    assets += SessionAsset(
+                        assetId = variantAssetId,
+                        kind = SessionAssetKind.VIDEO_SEGMENT,
+                        trackId = track.trackId,
+                        url = variantEntry.url,
+                        durationMs = variantEntry.durationMs,
+                        sequence = index,
+                        blocking = true,
+                        requiredForStartup = index < 4,
+                        localPath = null,
+                    )
+                    videoAssetIdsByTrack[track.trackId] = variantAssetId
+                    videoPrerequisiteAssetIdsByTrack[track.trackId] = variantEntry.prerequisiteAssetIds
+                }
 
             val audioIds = audioEntries.flatMap { (trackId, trackPlan) ->
                 trackPlan.entries.getOrNull(index)?.let { audioEntry ->
@@ -90,6 +125,7 @@ class ManifestPlanner {
                         requiredForStartup = false,
                         localPath = null,
                     )
+                    audioPrerequisiteAssetIds[trackId] = audioEntry.prerequisiteAssetIds
                     listOf(audioId)
                 } ?: emptyList()
             }
@@ -108,6 +144,7 @@ class ManifestPlanner {
                         requiredForStartup = false,
                         localPath = null,
                     )
+                    subtitlePrerequisiteAssetIds[trackId] = subtitleEntry.prerequisiteAssetIds
                     listOf(subtitleId)
                 } ?: emptyList()
             }
@@ -119,101 +156,17 @@ class ManifestPlanner {
                 startMs = startMs,
                 endMs = endMs,
                 videoAssetId = videoId,
+                videoDiscontinuityBefore = entry.discontinuityBefore,
+                videoAssetIdsByTrack = videoAssetIdsByTrack,
+                videoPrerequisiteAssetIdsByTrack = videoPrerequisiteAssetIdsByTrack,
                 audioAssetIds = audioIds,
                 subtitleAssetIds = subtitleIds,
-                prerequisiteAssetIds = videoPrerequisiteIds,
-                audioPrerequisiteAssetIds = audioPrerequisiteIds,
-                subtitlePrerequisiteAssetIds = subtitlePrerequisiteIds,
+                prerequisiteAssetIds = entry.prerequisiteAssetIds,
+                audioPrerequisiteAssetIds = audioPrerequisiteAssetIds,
+                subtitlePrerequisiteAssetIds = subtitlePrerequisiteAssetIds,
             )
         }
 
         return PlannedSessionTimeline(slots = slots, assets = assets)
     }
-}
-
-private data class MediaEntry(
-    val url: String,
-    val durationMs: Long?,
-)
-
-private data class TrackPlan(
-    val entries: List<MediaEntry>,
-    val prerequisiteAssets: List<SessionAsset>,
-)
-
-private fun parseMediaEntries(manifestBody: String, manifestUrl: String): List<MediaEntry> {
-    var pendingDurationMs: Long? = null
-    return buildList {
-        manifestBody.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.forEach { line ->
-            when {
-                line.startsWith("#EXTINF:", ignoreCase = true) -> {
-                    pendingDurationMs = (line.substringAfter(":").substringBefore(",").trim().toDoubleOrNull()?.times(1000))?.toLong()
-                }
-                line.startsWith("#") -> Unit
-                else -> {
-                    add(MediaEntry(url = URI(manifestUrl).resolve(line).toString(), durationMs = pendingDurationMs))
-                    pendingDurationMs = null
-                }
-            }
-        }
-    }
-}
-
-private fun parseTrackPlan(
-    trackId: String,
-    manifestBody: String,
-    manifestUrl: String,
-    blocking: Boolean,
-    requiredForStartup: Boolean,
-): TrackPlan {
-    val prerequisites = mutableListOf<SessionAsset>()
-    parseMapUri(manifestBody, manifestUrl)?.let { initUrl ->
-        prerequisites += SessionAsset(
-            assetId = "init-$trackId-0",
-            kind = SessionAssetKind.INIT_SEGMENT,
-            trackId = trackId,
-            url = initUrl,
-            durationMs = null,
-            sequence = 0,
-            blocking = blocking,
-            requiredForStartup = requiredForStartup,
-            localPath = null,
-        )
-    }
-    parseKey(manifestBody, manifestUrl)?.let { key ->
-        prerequisites += SessionAsset(
-            assetId = "key-$trackId-0",
-            kind = SessionAssetKind.KEY,
-            trackId = trackId,
-            url = key.url,
-            durationMs = null,
-            sequence = 0,
-            blocking = blocking,
-            requiredForStartup = requiredForStartup,
-            localPath = null,
-            keyMethod = key.method,
-            keyIv = key.iv,
-        )
-    }
-    return TrackPlan(
-        entries = parseMediaEntries(manifestBody, manifestUrl),
-        prerequisiteAssets = prerequisites,
-    )
-}
-
-private fun parseMapUri(manifestBody: String, manifestUrl: String): String? =
-    Regex("""#EXT-X-MAP:URI="([^"]+)"""").find(manifestBody)?.groupValues?.get(1)?.let { URI(manifestUrl).resolve(it).toString() }
-
-private data class ParsedKey(
-    val method: String,
-    val url: String,
-    val iv: String?,
-)
-
-private fun parseKey(manifestBody: String, manifestUrl: String): ParsedKey? {
-    val line = manifestBody.lineSequence().firstOrNull { it.trim().startsWith("#EXT-X-KEY:", ignoreCase = true) } ?: return null
-    val method = Regex("""METHOD=([^,]+)""").find(line)?.groupValues?.get(1) ?: "NONE"
-    val uri = Regex("""URI="([^"]+)"""").find(line)?.groupValues?.get(1)?.let { URI(manifestUrl).resolve(it).toString() } ?: return null
-    val iv = Regex("""IV=([^,\s]+)""").find(line)?.groupValues?.get(1)
-    return ParsedKey(method = method, url = uri, iv = iv)
 }

@@ -11,6 +11,8 @@ class AndroidNetworkConfigTest {
         val configPath = Paths.get("src/main/res/xml/network_security_config.xml")
         val config = String(Files.readAllBytes(configPath), Charsets.UTF_8)
 
-        assertTrue(config.contains("""<base-config cleartextTrafficPermitted="true""""))
+        assertTrue(config.contains("<base-config"))
+        assertTrue(config.contains("""cleartextTrafficPermitted="true""""))
+        assertTrue(config.contains("""tools:ignore="InsecureBaseConfiguration""""))
     }
 }

@@ -209,6 +209,61 @@ class PlaybackDiagnosticsStateTest {
     }
 
     @Test
+    fun recoverablePlaybackErrorsDoNotForceFailedStatus() {
+        val state = labs.newrapaw.dlna.probe.core.PlaybackDiagnosticsState(sampleLimit = 20)
+        state.resetForPlayback(
+            sourceUrl = "https://origin.example/video.m3u8",
+            localProxyUrl = "http://127.0.0.1:43000/session/session-1/manifest.m3u8",
+            settings = labs.newrapaw.dlna.probe.core.ProxySettingsState(prefetchConcurrency = 4),
+        )
+        state.setPlaybackStatus(labs.newrapaw.dlna.probe.core.PlaybackDiagnosticsStatus.BUFFERING)
+
+        state.setLastError("Recovering from ERROR_CODE_IO_BAD_HTTP_STATUS: upstream 502")
+
+        val snapshot = state.snapshot()
+
+        assertEquals(labs.newrapaw.dlna.probe.core.PlaybackDiagnosticsStatus.BUFFERING, snapshot.playbackStatus)
+        assertEquals("Recovering from ERROR_CODE_IO_BAD_HTTP_STATUS: upstream 502", snapshot.lastError)
+    }
+
+    @Test
+    fun successfulPlaybackClearsRecoverablePlaybackErrorMessage() {
+        val state = labs.newrapaw.dlna.probe.core.PlaybackDiagnosticsState(sampleLimit = 20)
+        state.resetForPlayback(
+            sourceUrl = "https://origin.example/video.m3u8",
+            localProxyUrl = "http://127.0.0.1:43000/session/session-1/manifest.m3u8",
+            settings = labs.newrapaw.dlna.probe.core.ProxySettingsState(prefetchConcurrency = 4),
+        )
+        state.setPlaybackStatus(labs.newrapaw.dlna.probe.core.PlaybackDiagnosticsStatus.BUFFERING)
+        state.setLastError("Rebuilding session after ERROR_CODE_IO_BAD_HTTP_STATUS: upstream 502")
+
+        state.setPlaybackStatus(labs.newrapaw.dlna.probe.core.PlaybackDiagnosticsStatus.PLAYING)
+
+        val snapshot = state.snapshot()
+
+        assertEquals(labs.newrapaw.dlna.probe.core.PlaybackDiagnosticsStatus.PLAYING, snapshot.playbackStatus)
+        assertEquals(null, snapshot.lastError)
+    }
+
+    @Test
+    fun cancelledSessionAssetDiagnosticsDoNotForceFailedStatus() {
+        val state = labs.newrapaw.dlna.probe.core.PlaybackDiagnosticsState(sampleLimit = 20)
+        state.resetForPlayback(
+            sourceUrl = "https://origin.example/video.m3u8",
+            localProxyUrl = "http://127.0.0.1:43000/session/session-1/manifest.m3u8",
+            settings = labs.newrapaw.dlna.probe.core.ProxySettingsState(prefetchConcurrency = 4),
+        )
+        state.setPlaybackStatus(labs.newrapaw.dlna.probe.core.PlaybackDiagnosticsStatus.BUFFERING)
+
+        state.setLastError("Session gone while loading asset: video-41")
+
+        val snapshot = state.snapshot()
+
+        assertEquals(labs.newrapaw.dlna.probe.core.PlaybackDiagnosticsStatus.BUFFERING, snapshot.playbackStatus)
+        assertEquals("Session gone while loading asset: video-41", snapshot.lastError)
+    }
+
+    @Test
     fun healthySlotWindowSuppressesExtraBottleneck() {
         val state = labs.newrapaw.dlna.probe.core.PlaybackDiagnosticsState(sampleLimit = 20)
         state.resetForPlayback(

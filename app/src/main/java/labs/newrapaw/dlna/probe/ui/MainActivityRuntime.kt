@@ -1,9 +1,11 @@
 package labs.newrapaw.dlna.probe.ui
 
 import androidx.appcompat.app.AppCompatActivity
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import java.io.Closeable
 import labs.newrapaw.dlna.probe.core.ProxySettingsStore
+import labs.newrapaw.dlna.probe.platform.RendererServiceRuntime
 import labs.newrapaw.dlna.probe.proxy.LocalHlsProxy
 
 class MainActivityRuntime(
@@ -12,19 +14,19 @@ class MainActivityRuntime(
     val proxySettingsStore: ProxySettingsStore,
     val shell: MainActivityShell,
     val playbackCoordinator: MainActivityPlaybackCoordinator,
-    private val playbackTelemetry: MainActivityPlaybackTelemetry,
-    private val ssdp: Closeable?,
+    private val playerListener: Player.Listener,
+    private val services: Closeable,
 ) : Closeable {
     override fun close() {
-        ssdp?.close()
-        playbackTelemetry.stop()
-        player.release()
-        proxy.close()
+        services.close()
+        player.removeListener(playerListener)
+        shell.playerView.player = null
     }
 }
 
 fun buildMainActivityRuntime(
     activity: AppCompatActivity,
+    serviceRuntime: RendererServiceRuntime,
     logState: MainActivityLogState,
     setStatus: (String) -> Unit,
     enterFullscreenPlayback: () -> Unit,
@@ -36,8 +38,8 @@ fun buildMainActivityRuntime(
     updateRecoveryState: (Int, Long?) -> Unit,
     clearRecoveryState: () -> Unit,
 ): MainActivityRuntime {
-    val player = buildMainActivityPlayer(activity)
-    lateinit var services: MainActivityServices
+    val services = buildMainActivityServices(serviceRuntime)
+    val player = services.player
     val playbackCoordinator = MainActivityPlaybackCoordinator(
         runOnUiThread = { block -> activity.runOnUiThread(block) },
         player = player,
@@ -48,16 +50,7 @@ fun buildMainActivityRuntime(
         exitFullscreenPlayback = exitFullscreenPlayback,
         resetRecoveryState = clearRecoveryState,
     )
-    services = buildMainActivityServices(
-        activity = activity,
-        logState = logState,
-        playbackCoordinator = playbackCoordinator,
-    )
     val localIpAddress = resolveLocalIpAddress()
-    val playbackTelemetry = MainActivityPlaybackTelemetry(
-        proxyProvider = { services.proxy },
-        playerProvider = { player },
-    )
     val publicControlUrl = buildPublicControlUrl(localIpAddress, services.proxy::publicBaseUrl)
     val shell = buildMainActivityShell(
         context = activity,
@@ -66,28 +59,29 @@ fun buildMainActivityRuntime(
         selectMenuItem = selectMenuItem,
         onMenuFocusChange = onMenuFocusChange,
     )
-    player.addListener(
-        MainActivityPlayerListener(
-            player = player,
-            proxy = services.proxy,
-            appendLog = logState::append,
-            setStatus = setStatus,
-            enterFullscreenPlayback = enterFullscreenPlayback,
-            exitFullscreenPlayback = exitFullscreenPlayback,
-            currentRecoveryAttempts = currentRecoveryAttempts,
-            currentRecoverySeekPositionMs = currentRecoverySeekPositionMs,
-            updateRecoveryState = updateRecoveryState,
-            clearRecoveryState = clearRecoveryState,
-        ),
+    val updatePlaybackKeepScreenOnState: (Boolean) -> Unit = { keepScreenOn ->
+        updatePlaybackKeepScreenOn(
+            window = activity.window,
+            playerView = shell.playerView,
+            keepScreenOn = keepScreenOn,
+        )
+    }
+    updatePlaybackKeepScreenOnState(false)
+    val playerListener = MainActivityPlayerListener(
+        player = player,
+        setStatus = setStatus,
+        enterFullscreenPlayback = enterFullscreenPlayback,
+        exitFullscreenPlayback = exitFullscreenPlayback,
+        updatePlaybackKeepScreenOn = updatePlaybackKeepScreenOnState,
     )
-    playbackTelemetry.start()
+    player.addListener(playerListener)
     return MainActivityRuntime(
         player = player,
         proxy = services.proxy,
         proxySettingsStore = services.proxySettingsStore,
         shell = shell,
         playbackCoordinator = playbackCoordinator,
-        playbackTelemetry = playbackTelemetry,
-        ssdp = services.ssdp,
+        playerListener = playerListener,
+        services = services,
     )
 }

@@ -29,21 +29,7 @@ fun buildPlaybackDiagnosticsJson(snapshot: PlaybackDiagnosticsSnapshot): String 
         append(',')
         appendJsonField("consecutiveFailures", snapshot.consecutiveFailures)
         append(',')
-        appendJsonField("recentSegmentSamples", buildJsonArray(snapshot.recentSegmentSamples) { sample ->
-            buildString {
-                append('{')
-                appendJsonField("url", sample.url)
-                append(',')
-                appendJsonField("source", sample.source)
-                append(',')
-                appendJsonField("elapsedMs", sample.elapsedMs)
-                append(',')
-                appendJsonField("success", sample.success)
-                append(',')
-                appendJsonField("reason", sample.reason)
-                append('}')
-            }
-        }, isRawJson = true)
+        appendJsonField("recentSegmentSamples", buildRecentSegmentSamplesJson(snapshot), isRawJson = true)
         append(',')
         appendJsonField("prefetchConcurrency", snapshot.prefetchConcurrency)
         append(',')
@@ -57,63 +43,9 @@ fun buildPlaybackDiagnosticsJson(snapshot: PlaybackDiagnosticsSnapshot): String 
         append(',')
         appendJsonField("currentLoadingSource", snapshot.currentLoadingSource)
         append(',')
-        appendJsonField("slotStates", buildJsonArray(snapshot.slotStates) { item ->
-            buildString {
-                append('{')
-                appendJsonField("slotIndex", item.slotIndex)
-                append(',')
-                appendJsonField("startMs", item.startMs)
-                append(',')
-                appendJsonField("endMs", item.endMs)
-                append(',')
-                appendJsonField("state", item.state.name)
-                append(',')
-                appendJsonField("videoReady", item.videoReady)
-                append(',')
-                appendJsonField("audioReady", item.audioReady)
-                append(',')
-                appendJsonField("subtitleReady", item.subtitleReady)
-                append(',')
-                appendJsonField(
-                    "blockedAssetKinds",
-                    buildJsonArray(item.blockedAssetKinds) { kind -> "\"${escapeJson(kind.name)}\"" },
-                    isRawJson = true,
-                )
-                append(',')
-                appendJsonField(
-                    "degradedAssetKinds",
-                    buildJsonArray(item.degradedAssetKinds) { kind -> "\"${escapeJson(kind.name)}\"" },
-                    isRawJson = true,
-                )
-                append('}')
-            }
-        }, isRawJson = true)
+        appendJsonField("slotStates", buildSlotStatesJson(snapshot), isRawJson = true)
         append(',')
-        appendJsonField("assetDiagnostics", buildJsonArray(snapshot.assetDiagnostics) { item ->
-            buildString {
-                append('{')
-                appendJsonField("assetId", item.assetId)
-                append(',')
-                appendJsonField("kind", item.kind.name)
-                append(',')
-                appendJsonField("trackId", item.trackId)
-                append(',')
-                appendJsonField("state", item.state.name)
-                append(',')
-                appendJsonField("localReady", item.localReady)
-                append(',')
-                appendJsonField("sizeBytes", item.sizeBytes)
-                append(',')
-                appendJsonField("lastElapsedMs", item.lastElapsedMs)
-                append(',')
-                appendJsonField("lastSource", item.lastSource)
-                append(',')
-                appendJsonField("retryCount", item.retryCount)
-                append(',')
-                appendJsonField("failureReason", item.failureReason)
-                append('}')
-            }
-        }, isRawJson = true)
+        appendJsonField("assetDiagnostics", buildAssetDiagnosticsJson(snapshot), isRawJson = true)
         append(',')
         appendJsonField("currentPlaybackSlotIndex", snapshot.currentPlaybackSlotIndex)
         append(',')
@@ -167,29 +99,9 @@ fun buildPlaybackDiagnosticsJson(snapshot: PlaybackDiagnosticsSnapshot): String 
         append(',')
         appendJsonField("isStale", snapshot.isStale)
         append(',')
-        appendJsonField("insights", buildJsonArray(snapshot.insights) { insight ->
-            buildString {
-                append('{')
-                appendJsonField("code", insight.code)
-                append(',')
-                appendJsonField("message", insight.message)
-                append(',')
-                appendJsonField("detail", insight.detail)
-                append('}')
-            }
-        }, isRawJson = true)
+        appendJsonField("insights", buildInsightsJson(snapshot), isRawJson = true)
         append(',')
-        appendJsonField("primaryBottleneck", snapshot.primaryBottleneck?.let { insight ->
-            buildString {
-                append('{')
-                appendJsonField("code", insight.code)
-                append(',')
-                appendJsonField("message", insight.message)
-                append(',')
-                appendJsonField("detail", insight.detail)
-                append('}')
-            }
-        }, isRawJson = true)
+        appendJsonField("primaryBottleneck", buildPrimaryBottleneckJson(snapshot), isRawJson = true)
         append(',')
         appendJsonField("timeoutCount", snapshot.timeoutCount)
         append(',')
@@ -197,57 +109,4 @@ fun buildPlaybackDiagnosticsJson(snapshot: PlaybackDiagnosticsSnapshot): String 
         append(',')
         appendJsonField("lastFallbackReason", snapshot.lastFallbackReason)
         append('}')
-    }
-
-private fun <T> buildJsonArray(items: List<T>, itemBuilder: (T) -> String): String =
-    items.joinToString(prefix = "[", postfix = "]", separator = ",", transform = itemBuilder)
-
-private fun StringBuilder.appendJsonField(name: String, value: String?, isRawJson: Boolean = false) {
-    append('"')
-    append(escapeJson(name))
-    append("\":")
-    when {
-        value == null -> append("null")
-        isRawJson -> append(value)
-        else -> {
-            append('"')
-            append(escapeJson(value))
-            append('"')
-        }
-    }
-}
-
-private fun StringBuilder.appendJsonField(name: String, value: Number?) {
-    append('"')
-    append(escapeJson(name))
-    append("\":")
-    append(value ?: "null")
-}
-
-private fun StringBuilder.appendJsonField(name: String, value: Boolean) {
-    append('"')
-    append(escapeJson(name))
-    append("\":")
-    append(value)
-}
-
-private fun StringBuilder.appendJsonField(name: String, value: Boolean?) {
-    append('"')
-    append(escapeJson(name))
-    append("\":")
-    append(value ?: "null")
-}
-
-private fun escapeJson(value: String): String =
-    buildString(value.length + 8) {
-        value.forEach { char ->
-            when (char) {
-                '\\' -> append("\\\\")
-                '"' -> append("\\\"")
-                '\n' -> append("\\n")
-                '\r' -> append("\\r")
-                '\t' -> append("\\t")
-                else -> append(char)
-            }
-        }
     }

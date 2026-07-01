@@ -81,12 +81,11 @@ internal fun isPreparedAssetReady(
 ): Boolean {
     val runtime = prepared.assetRuntime[assetId]
     if (runtime?.state == SessionAssetState.READY) return true
-    val file = sessionAssetStore.resolveAsset(prepared.session.sessionId, assetId)
-    if (!file.exists()) return false
+    val assetLength = sessionAssetStore.assetLength(prepared.session.sessionId, assetId) ?: return false
     prepared.assetRuntime.getOrPut(assetId) { SessionAssetRuntime() }.apply {
         state = SessionAssetState.READY
-        localFile = file
-        localSizeBytes = file.length()
+        localFile = sessionAssetStore.resolveAsset(prepared.session.sessionId, assetId)
+        localSizeBytes = assetLength
     }
     return true
 }

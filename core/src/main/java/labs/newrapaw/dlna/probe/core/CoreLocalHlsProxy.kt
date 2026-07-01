@@ -27,12 +27,12 @@ class CoreLocalHlsProxy(
     private val proxyServer = components.proxyServer
 
     val port: Int
-        get() = proxyServer.port
+        get() = proxyServer?.port ?: 0
 
     val baseUrl: String
-        get() = proxyServer.baseUrl
+        get() = proxyServer?.baseUrl ?: "http://127.0.0.1:0"
 
-    fun publicBaseUrl(hostAddress: String): String = proxyServer.publicBaseUrl(hostAddress)
+    fun publicBaseUrl(hostAddress: String): String = proxyServer?.publicBaseUrl(hostAddress) ?: "http://$hostAddress:0"
 
     fun activeSessionInfo(localBaseUrl: String = baseUrl): ActiveSessionInfo? = playbackRuntime.activeSessionInfo(localBaseUrl)
 
@@ -74,8 +74,9 @@ class CoreLocalHlsProxy(
     fun handleSessionRequest(
         method: String,
         path: String,
+        headers: Map<String, String> = emptyMap(),
         output: OutputStream,
-    ): Boolean = components.requestHandler.handleSessionRequest(method, path, output)
+    ): Boolean = components.requestHandler.handleSessionRequest(method, path, headers, output)
 
     override fun close() {
         components.close()
@@ -88,6 +89,7 @@ class CoreLocalHlsProxy(
     private fun shouldSuppressRequestFailureLog(error: Throwable): Boolean {
         val socketError = error as? SocketException ?: return false
         val message = socketError.message.orEmpty()
-        return message.contains("Broken pipe", ignoreCase = true)
+        return message.contains("Broken pipe", ignoreCase = true) ||
+            message.contains("Connection reset by peer", ignoreCase = true)
     }
 }

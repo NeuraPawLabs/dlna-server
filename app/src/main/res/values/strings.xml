@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">PawCast</string>
+    <string name="main_activity_title">PawCast</string>
+    <string name="main_activity_management_url">管理页面: %1$s</string>
 </resources>

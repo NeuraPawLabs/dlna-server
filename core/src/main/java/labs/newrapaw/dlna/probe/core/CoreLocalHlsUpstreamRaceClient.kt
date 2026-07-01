@@ -5,11 +5,13 @@ import java.util.concurrent.ExecutionException
 import java.util.concurrent.ExecutorCompletionService
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Future
+import java.util.concurrent.TimeUnit
 import labs.newrapaw.dlna.probe.core.session.SessionCallTracker
 import okhttp3.Call
 
 internal class CoreLocalHlsUpstreamRaceClient(
     private val upstreamRaceExecutor: ExecutorService,
+    private val raceTimeoutMs: Long = DEFAULT_RACE_TIMEOUT_MS,
 ) {
     fun race(
         directCall: Call,
@@ -25,10 +27,21 @@ internal class CoreLocalHlsUpstreamRaceClient(
             completion.submit(Callable { executeRaceCall("proxy", proxyCall, executeCallMeasured) }),
         )
         val failures = mutableListOf<String>()
+        val deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(raceTimeoutMs)
 
         try {
             repeat(futures.size) {
-                val result = completion.take().getOrFailure()
+                val remainingNanos = deadlineNanos - System.nanoTime()
+                if (remainingNanos <= 0L) {
+                    cancelRaceLosers(futures, directCall, proxyCall)
+                    throw UpstreamFetchException(504, "race timeout after ${raceTimeoutMs}ms")
+                }
+                val completed = completion.poll(remainingNanos, TimeUnit.NANOSECONDS)
+                if (completed == null) {
+                    cancelRaceLosers(futures, directCall, proxyCall)
+                    throw UpstreamFetchException(504, "race timeout after ${raceTimeoutMs}ms")
+                }
+                val result = completed.getOrFailure()
                 if (result.fetchResult != null) {
                     cancelRaceLosers(futures, directCall, proxyCall)
                     return result.fetchResult
@@ -84,4 +97,8 @@ internal class CoreLocalHlsUpstreamRaceClient(
                 elapsedMs = -1,
             )
         }
+
+    private companion object {
+        const val DEFAULT_RACE_TIMEOUT_MS = 15_000L
+    }
 }

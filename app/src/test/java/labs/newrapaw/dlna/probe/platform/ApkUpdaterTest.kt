@@ -1,11 +1,15 @@
 package labs.newrapaw.dlna.probe.platform
 
+import java.nio.file.Files
+import java.nio.file.Paths
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayOutputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import okhttp3.OkHttpClient
 
 class ApkUpdaterTest {
     @Test
@@ -43,6 +47,36 @@ class ApkUpdaterTest {
     @Test
     fun validateApkDownloadRejectsEmptyBody() {
         assertEquals("APK download returned empty body", validateApkDownload(ByteArray(0)))
+    }
+
+    @Test
+    fun apkDownloadClientCapsUnboundedCallTimeout() {
+        val client = buildApkDownloadClient(OkHttpClient())
+
+        assertEquals(15_000, client.callTimeoutMillis)
+    }
+
+    @Test
+    fun apkDownloadClientPreservesShorterExistingTimeout() {
+        val client = buildApkDownloadClient(
+            OkHttpClient.Builder()
+                .callTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
+                .build(),
+        )
+
+        assertEquals(2_000, client.callTimeoutMillis)
+    }
+
+    @Test
+    fun apkUpdaterUsesDedicatedDownloadClient() {
+        val source = String(
+            Files.readAllBytes(Paths.get("src/main/java/labs/newrapaw/dlna/probe/platform/ApkUpdater.kt")),
+            Charsets.UTF_8,
+        )
+
+        assertTrue(source.contains("private val downloadClient = buildApkDownloadClient(client)"))
+        assertTrue(source.contains("downloadClient.newCall("))
+        assertTrue(source.contains("buildApkDownloadClient("))
     }
 
     private fun zipBytes(vararg entries: Pair<String, ByteArray>): ByteArray {

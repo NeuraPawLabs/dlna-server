@@ -22,7 +22,8 @@ class MainActivityHomeScreenTest {
             Charsets.UTF_8,
         )
 
-        assertTrue(shellSource.contains("\"PawCast\""))
+        assertTrue(shellSource.contains("R.string.main_activity_title"))
+        assertTrue(shellSource.contains("R.string.main_activity_management_url"))
         assertTrue(shellSource.contains("\"播放\""))
         assertTrue(shellSource.contains("\"代理\""))
         assertTrue(shellSource.contains("\"日志\""))

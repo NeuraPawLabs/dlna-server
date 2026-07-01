@@ -16,20 +16,27 @@ class SessionDownloader {
         ): List<String> {
             return slots
                 .filter { it.slotIndex >= playHeadSlotIndex }
-                .flatMap { slot ->
-                    buildList {
-                        slot.videoAssetId?.let(::add)
-                        addAll(slot.audioAssetIds)
-                        addAll(slot.subtitleAssetIds)
-                    }
-                }
+                .flatMap(::playbackAssetIdsForSlot)
                 .filter { assetId -> assetId !in readyAssetIds }
+                .distinct()
                 .map { assetId -> assetId to assetKindPriority(assetsById.getValue(assetId).kind) }
                 .chunkedBySlot(assetsById)
                 .flatMap { chunk -> chunk.sortedBy { (_, priority) -> priority }.map { (assetId, _) -> assetId } }
         }
     }
 }
+
+private fun playbackAssetIdsForSlot(slot: TimelineSlot): List<String> =
+    buildList {
+        addAll(slot.prerequisiteAssetIds)
+        addAll(slot.videoPrerequisiteAssetIdsByTrack.values.flatten())
+        slot.videoAssetId?.let(::add)
+        addAll(slot.videoAssetIdsByTrack.values)
+        addAll(slot.audioPrerequisiteAssetIds.values.flatten())
+        addAll(slot.audioAssetIds)
+        addAll(slot.subtitlePrerequisiteAssetIds.values.flatten())
+        addAll(slot.subtitleAssetIds)
+    }
 
 private fun List<Pair<String, Int>>.chunkedBySlot(
     assetsById: Map<String, SessionAsset>,
@@ -51,10 +58,12 @@ private fun List<Pair<String, Int>>.chunkedBySlot(
 
 private fun assetKindPriority(kind: SessionAssetKind): Int =
     when (kind) {
-        SessionAssetKind.VIDEO_SEGMENT -> 0
-        SessionAssetKind.AUDIO_SEGMENT -> 1
-        SessionAssetKind.SUBTITLE_SEGMENT -> 2
-        else -> 3
+        SessionAssetKind.INIT_SEGMENT -> 0
+        SessionAssetKind.KEY -> 1
+        SessionAssetKind.VIDEO_SEGMENT -> 2
+        SessionAssetKind.AUDIO_SEGMENT -> 3
+        SessionAssetKind.SUBTITLE_SEGMENT -> 4
+        else -> 5
     }
 
 private fun startupPriority(asset: SessionAsset): Int =

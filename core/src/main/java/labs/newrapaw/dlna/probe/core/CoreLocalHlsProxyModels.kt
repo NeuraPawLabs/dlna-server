@@ -32,6 +32,8 @@ internal data class PreparedSessionPlayback(
     val session: PlaybackSession,
     val masterManifest: String,
     val videoPlaylist: String,
+    val primaryVideoTrackId: String,
+    val videoPlaylists: Map<String, String>,
     val audioPlaylists: Map<String, String>,
     val subtitlePlaylists: Map<String, String>,
     val assetsById: Map<String, SessionAsset>,

@@ -93,4 +93,98 @@ class SessionDownloaderTest {
             queue,
         )
     }
+
+    @Test
+    fun playheadQueueIncludesPerSlotPrerequisitesBeforeLaterSlotMedia() {
+        val slots = listOf(
+            TimelineSlot(
+                slotIndex = 0,
+                startMs = 0,
+                endMs = 4_000,
+                videoAssetId = "video-0",
+                audioAssetIds = listOf("audio-0"),
+                subtitleAssetIds = emptyList(),
+                prerequisiteAssetIds = listOf("init-0", "key-0"),
+            ),
+            TimelineSlot(
+                slotIndex = 1,
+                startMs = 4_000,
+                endMs = 8_000,
+                videoAssetId = "video-1",
+                audioAssetIds = listOf("audio-1"),
+                subtitleAssetIds = emptyList(),
+                prerequisiteAssetIds = listOf("init-1", "key-1"),
+            ),
+        )
+        val assets = listOf(
+            SessionAsset("init-0", SessionAssetKind.INIT_SEGMENT, null, "init-0", null, 0, true, true, null),
+            SessionAsset("key-0", SessionAssetKind.KEY, null, "key-0", null, 0, true, true, null),
+            SessionAsset("video-0", SessionAssetKind.VIDEO_SEGMENT, "video", "v0", 4_000, 0, true, true, null),
+            SessionAsset("audio-0", SessionAssetKind.AUDIO_SEGMENT, "audio", "a0", 4_000, 0, true, true, null),
+            SessionAsset("init-1", SessionAssetKind.INIT_SEGMENT, null, "init-1", null, 1, true, false, null),
+            SessionAsset("key-1", SessionAssetKind.KEY, null, "key-1", null, 1, true, false, null),
+            SessionAsset("video-1", SessionAssetKind.VIDEO_SEGMENT, "video", "v1", 4_000, 1, true, false, null),
+            SessionAsset("audio-1", SessionAssetKind.AUDIO_SEGMENT, "audio", "a1", 4_000, 1, true, false, null),
+        ).associateBy { it.assetId }
+
+        val queue = SessionDownloader.planPlaybackQueue(
+            slots = slots,
+            assetsById = assets,
+            playHeadSlotIndex = 1,
+            readyAssetIds = setOf("init-0", "key-0", "video-0", "audio-0"),
+        )
+
+        assertEquals(
+            listOf("init-1", "key-1", "video-1", "audio-1"),
+            queue,
+        )
+    }
+
+    @Test
+    fun playheadQueueIncludesAlternateVideoTrackAssetsAndPrerequisitesForForwardSlots() {
+        val slots = listOf(
+            TimelineSlot(
+                slotIndex = 1,
+                startMs = 4_000,
+                endMs = 8_000,
+                videoAssetId = "video-main-1",
+                videoAssetIdsByTrack = linkedMapOf(
+                    "video-main" to "video-main-1",
+                    "video-low" to "video-low-1",
+                ),
+                videoPrerequisiteAssetIdsByTrack = linkedMapOf(
+                    "video-main" to listOf("init-main-1", "key-main-1"),
+                    "video-low" to listOf("init-low-1", "key-low-1"),
+                ),
+                prerequisiteAssetIds = listOf("init-main-1", "key-main-1"),
+            ),
+        )
+        val assets = listOf(
+            SessionAsset("init-main-1", SessionAssetKind.INIT_SEGMENT, "video-main", "init-main", null, 1, true, false, null),
+            SessionAsset("key-main-1", SessionAssetKind.KEY, "video-main", "key-main", null, 1, true, false, null),
+            SessionAsset("video-main-1", SessionAssetKind.VIDEO_SEGMENT, "video-main", "video-main", 4_000, 1, true, false, null),
+            SessionAsset("init-low-1", SessionAssetKind.INIT_SEGMENT, "video-low", "init-low", null, 1, true, false, null),
+            SessionAsset("key-low-1", SessionAssetKind.KEY, "video-low", "key-low", null, 1, true, false, null),
+            SessionAsset("video-low-1", SessionAssetKind.VIDEO_SEGMENT, "video-low", "video-low", 4_000, 1, true, false, null),
+        ).associateBy { it.assetId }
+
+        val queue = SessionDownloader.planPlaybackQueue(
+            slots = slots,
+            assetsById = assets,
+            playHeadSlotIndex = 1,
+            readyAssetIds = emptySet(),
+        )
+
+        assertEquals(
+            listOf(
+                "init-main-1",
+                "init-low-1",
+                "key-main-1",
+                "key-low-1",
+                "video-main-1",
+                "video-low-1",
+            ),
+            queue,
+        )
+    }
 }

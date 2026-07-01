@@ -8,7 +8,9 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.MulticastSocket
 import java.nio.charset.Charset
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
@@ -32,7 +34,7 @@ class SsdpAdvertiser(
         if (running.getAndSet(true)) return
 
         runCatching {
-            val wifi = appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            val wifi = appContext.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
             multicastLock = wifi?.createMulticastLock("newrapaw-dlna-ssdp")?.apply {
                 setReferenceCounted(false)
                 acquire()
@@ -47,17 +49,18 @@ class SsdpAdvertiser(
             }
 
             executor.execute { receiveLoop() }
-            executor.scheduleAtFixedRate({ notifyAlive() }, 0, 30, TimeUnit.SECONDS)
+            executor.scheduleWithFixedDelay({ notifyAlive() }, 0, 30, TimeUnit.SECONDS)
             log("[SSDP] Started")
         }.onFailure {
             running.set(false)
+            cleanupStartFailure()
             log("[SSDP] Start failed: ${it.message}")
         }
     }
 
     override fun close() {
-        running.set(false)
         runCatching { notifyByebye() }
+        running.set(false)
         runCatching { socket?.close() }
         socket = null
         runCatching { multicastLock?.release() }
@@ -105,7 +108,7 @@ class SsdpAdvertiser(
         return listOf(
             "HTTP/1.1 200 OK",
             "CACHE-CONTROL: max-age=1800",
-            "DATE: ${Date().toString()}",
+            "DATE: ${formatSsdpDate()}",
             "EXT:",
             "LOCATION: ${config.baseUrl}/description.xml",
             "SERVER: Android UPnP/1.0 NewraPawDLNA/0.1",
@@ -141,7 +144,14 @@ class SsdpAdvertiser(
                 if (!running.get()) return@onFailure
                 if (shouldSuppressSendFailure(error)) return@onFailure
                 log("[SSDP] Send failed: ${error.message}")
-            }
+        }
+    }
+
+    private fun cleanupStartFailure() {
+        runCatching { socket?.close() }
+        socket = null
+        runCatching { multicastLock?.release() }
+        multicastLock = null
     }
 
     private fun shouldSuppressSendFailure(error: Throwable): Boolean {
@@ -174,3 +184,6 @@ class SsdpAdvertiser(
         )
     }
 }
+
+internal fun formatSsdpDate(now: Instant = Instant.now()): String =
+    DateTimeFormatter.RFC_1123_DATE_TIME.format(now.atOffset(ZoneOffset.UTC))

@@ -11,7 +11,13 @@ internal class CoreLocalHlsSessionAssetLoader(
     private val diagnosticsState: PlaybackDiagnosticsState,
     private val upstreamClient: CoreLocalHlsUpstreamClient,
     private val refreshDiagnosticsSnapshot: () -> Unit,
+    private val assetWaitTimeoutMs: Long = DEFAULT_ASSET_WAIT_TIMEOUT_MS,
 ) {
+    private val runtimeCoordinator = CoreLocalHlsSessionAssetRuntimeCoordinator(
+        sessionAssetStore = sessionAssetStore,
+        assetWaitTimeoutMs = assetWaitTimeoutMs,
+    )
+
     fun loadSessionAsset(
         prepared: PreparedSessionPlayback,
         asset: SessionAsset,
@@ -37,12 +43,23 @@ internal class CoreLocalHlsSessionAssetLoader(
             if (runtime.state == SessionAssetState.FAILED) {
                 return null
             }
+            if (runtime.state == SessionAssetState.DOWNLOADING) {
+                return when (val acquire = runtimeCoordinator.acquire(
+                    sessionId = prepared.session.sessionId,
+                    assetRuntime = prepared.assetRuntime,
+                    assetId = asset.assetId,
+                )) {
+                    is SessionAssetAcquireResult.Waited -> acquire.bytes
+                    is SessionAssetAcquireResult.Stored -> acquire.bytes
+                    is SessionAssetAcquireResult.Download -> null
+                }
+            }
         }
         return runCatching {
             loadSessionAsset(prepared, asset)
         }.getOrElse {
             val updatedRuntime = prepared.assetRuntime[asset.assetId]
-            if (updatedRuntime?.state == SessionAssetState.FAILED) {
+            if (updatedRuntime?.state == SessionAssetState.FAILED || updatedRuntime?.state == SessionAssetState.NOT_STARTED) {
                 null
             } else {
                 throw it
@@ -58,40 +75,21 @@ internal class CoreLocalHlsSessionAssetLoader(
         callTracker: SessionCallTracker,
     ): ByteArray {
         val asset = assetsById.getValue(assetId)
-        val runtime = assetRuntime.getOrPut(assetId) { SessionAssetRuntime() }
-        synchronized(runtime.lock) {
-            val existing = sessionAssetStore.resolveAsset(sessionId, assetId)
-            if (existing.exists()) {
-                runtime.state = SessionAssetState.READY
-                runtime.localFile = existing
-                runtime.localSizeBytes = existing.length()
-                runtime.lastSource = "session-local"
-                return existing.readBytes()
-            }
-            if (runtime.state == SessionAssetState.DOWNLOADING) {
-                return waitForPreparedAssetInFlight(sessionId, assetRuntime, assetId, runtime)
-                    ?: throw IllegalStateException("asset load did not complete: $assetId")
-            }
-            runtime.state = SessionAssetState.DOWNLOADING
-            runtime.lastError = null
+        val runtime = when (val acquire = runtimeCoordinator.acquire(sessionId, assetRuntime, assetId)) {
+            is SessionAssetAcquireResult.Stored -> return acquire.bytes
+            is SessionAssetAcquireResult.Waited ->
+                return acquire.bytes ?: throw IllegalStateException("asset load did not complete: $assetId")
+            is SessionAssetAcquireResult.Download -> acquire.runtime
         }
         var lastError: Throwable? = null
         repeat(SESSION_ASSET_MAX_RETRY_COUNT) { attempt ->
             if (callTracker.isCancelled()) {
-                synchronized(runtime.lock) {
-                    runtime.state = SessionAssetState.NOT_STARTED
-                    runtime.lastError = "cancelled"
-                    runtime.lock.notifyAll()
-                }
+                runtimeCoordinator.markCancelled(runtime)
                 throw SessionCancelledException("session cancelled while loading asset: $assetId")
             }
             runCatching {
                 val startedAt = System.nanoTime()
-                synchronized(runtime.lock) {
-                    runtime.retryCount += 1
-                    runtime.state = SessionAssetState.DOWNLOADING
-                    runtime.lastError = null
-                }
+                runtimeCoordinator.markAttemptStarting(runtime)
                 diagnosticsState.updateCurrentLoadingAsset(
                     assetId = asset.assetId,
                     kind = asset.kind.name,
@@ -102,18 +100,16 @@ internal class CoreLocalHlsSessionAssetLoader(
                 val writeStartedAt = System.nanoTime()
                 val file = sessionAssetStore.writeAsset(sessionId, assetId, fetchResult.bytes)
                 val diskWriteMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - writeStartedAt)
-                synchronized(runtime.lock) {
-                    runtime.state = SessionAssetState.READY
-                    runtime.localFile = file
-                    runtime.localSizeBytes = fetchResult.bytes.size.toLong()
-                    runtime.lastElapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
-                    runtime.lastSource = fetchResult.source
-                    runtime.upstreamFirstByteMs = fetchResult.firstByteMs
-                    runtime.upstreamCompleteMs = fetchResult.completeMs
-                    runtime.diskWriteMs = diskWriteMs.coerceAtLeast(0L)
-                    runtime.lastError = null
-                    runtime.lock.notifyAll()
-                }
+                runtimeCoordinator.markReady(
+                    runtime = runtime,
+                    file = file,
+                    bytes = fetchResult.bytes,
+                    elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt),
+                    source = fetchResult.source,
+                    upstreamFirstByteMs = fetchResult.firstByteMs,
+                    upstreamCompleteMs = fetchResult.completeMs,
+                    diskWriteMs = diskWriteMs,
+                )
                 diagnosticsState.updateCurrentLoadingAsset(
                     assetId = null,
                     kind = null,
@@ -124,17 +120,12 @@ internal class CoreLocalHlsSessionAssetLoader(
                 return fetchResult.bytes
             }.onFailure { error ->
                 lastError = error
-                synchronized(runtime.lock) {
-                    runtime.lastElapsedMs = null
-                    runtime.lastError = "${error::class.java.simpleName}: ${error.message}"
-                    runtime.lastSource = "session-local"
-                    if (callTracker.isCancelled()) {
-                        runtime.state = SessionAssetState.NOT_STARTED
-                    } else if (attempt == SESSION_ASSET_MAX_RETRY_COUNT - 1) {
-                        runtime.state = SessionAssetState.FAILED
-                    }
-                    runtime.lock.notifyAll()
-                }
+                runtimeCoordinator.markFailure(
+                    runtime = runtime,
+                    error = error,
+                    cancelled = callTracker.isCancelled(),
+                    lastAttempt = attempt == SESSION_ASSET_MAX_RETRY_COUNT - 1,
+                )
                 if (callTracker.isCancelled() || attempt == SESSION_ASSET_MAX_RETRY_COUNT - 1) {
                     diagnosticsState.updateCurrentLoadingAsset(
                         assetId = null,
@@ -148,43 +139,30 @@ internal class CoreLocalHlsSessionAssetLoader(
                     throw SessionCancelledException("session cancelled while loading asset: $assetId")
                 }
                 if (attempt < SESSION_ASSET_MAX_RETRY_COUNT - 1) {
-                    Thread.sleep(SESSION_ASSET_RETRY_DELAY_MS)
+                    try {
+                        Thread.sleep(SESSION_ASSET_RETRY_DELAY_MS)
+                    } catch (error: InterruptedException) {
+                        lastError = error
+                        runtimeCoordinator.markInterruptedDuringBackoff(runtime, error)
+                        diagnosticsState.updateCurrentLoadingAsset(
+                            assetId = null,
+                            kind = null,
+                            trackId = null,
+                            source = null,
+                        )
+                        refreshDiagnosticsSnapshot()
+                        Thread.currentThread().interrupt()
+                        throw error
+                    }
                 }
             }
         }
         throw lastError ?: IllegalStateException("asset load failed without exception: $assetId")
     }
 
-    private fun waitForPreparedAssetInFlight(
-        sessionId: String,
-        assetRuntime: MutableMap<String, SessionAssetRuntime>,
-        assetId: String,
-        runtime: SessionAssetRuntime = assetRuntime.getOrPut(assetId) { SessionAssetRuntime() },
-    ): ByteArray? {
-        while (true) {
-            val state = synchronized(runtime.lock) {
-                val existing = sessionAssetStore.resolveAsset(sessionId, assetId)
-                if (existing.exists()) {
-                    runtime.state = SessionAssetState.READY
-                    runtime.localFile = existing
-                    runtime.localSizeBytes = existing.length()
-                    return existing.readBytes()
-                }
-                val currentState = runtime.state
-                if (currentState == SessionAssetState.FAILED || currentState == SessionAssetState.NOT_STARTED) {
-                    return null
-                }
-                runCatching { runtime.lock.wait(50L) }
-                currentState
-            }
-            if (state == SessionAssetState.FAILED || state == SessionAssetState.NOT_STARTED) {
-                return null
-            }
-        }
-    }
-
     private companion object {
         const val SESSION_ASSET_MAX_RETRY_COUNT = 3
         const val SESSION_ASSET_RETRY_DELAY_MS = 100L
+        const val DEFAULT_ASSET_WAIT_TIMEOUT_MS = 15_000L
     }
 }

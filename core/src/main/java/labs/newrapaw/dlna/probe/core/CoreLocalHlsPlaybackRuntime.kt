@@ -8,26 +8,27 @@ internal class CoreLocalHlsPlaybackRuntime(
     private val sessionAssetStore: SessionAssetStore,
     private val sessionLocalServer: SessionLocalServer,
 ) {
-    private var activeSessionShell: PlaybackSession? = null
-    private var activePreparedSession: PreparedSessionPlayback? = null
-    private var latestPlayerPositionMs: Long? = null
-    private var latestBufferedPositionMs: Long? = null
+    private val lock = Any()
+    private var state = CoreLocalHlsPlaybackState()
 
-    fun activeSessionShell(): PlaybackSession? = activeSessionShell
+    fun snapshot(): CoreLocalHlsPlaybackSnapshot = synchronized(lock) { state.toSnapshot() }
 
-    fun activePreparedSession(): PreparedSessionPlayback? = activePreparedSession
+    fun activeSessionShell(): PlaybackSession? = synchronized(lock) { state.activeSessionShell }
 
-    fun latestPlayerPositionMs(): Long? = latestPlayerPositionMs
+    fun activePreparedSession(): PreparedSessionPlayback? = synchronized(lock) { state.activePreparedSession }
 
-    fun latestBufferedPositionMs(): Long? = latestBufferedPositionMs
+    fun latestPlayerPositionMs(): Long? = synchronized(lock) { state.latestPlayerPositionMs }
 
-    fun setActivePreparedSession(prepared: PreparedSessionPlayback?) {
-        activePreparedSession = prepared
+    fun latestBufferedPositionMs(): Long? = synchronized(lock) { state.latestBufferedPositionMs }
+
+    fun setActivePreparedSession(prepared: PreparedSessionPlayback?) = synchronized(lock) {
+        state = state.copy(activePreparedSession = prepared)
     }
 
     fun activeSessionInfo(baseUrl: String): ActiveSessionInfo? {
-        val prepared = activePreparedSession
-        val session = prepared?.session ?: activeSessionShell ?: return null
+        val snapshot = synchronized(lock) { state }
+        val prepared = snapshot.activePreparedSession
+        val session = prepared?.session ?: snapshot.activeSessionShell ?: return null
         return ActiveSessionInfo(
             sessionId = session.sessionId,
             status = session.status,
@@ -40,67 +41,69 @@ internal class CoreLocalHlsPlaybackRuntime(
         )
     }
 
-    fun updatePlaybackPosition(positionMs: Long?) {
-        latestPlayerPositionMs = positionMs
-        latestBufferedPositionMs = positionMs
+    fun updatePlaybackPosition(positionMs: Long?) = synchronized(lock) {
+        state = state.copy(
+            latestPlayerPositionMs = positionMs,
+        )
     }
 
-    fun updatePlayerTelemetry(positionMs: Long?, bufferedPositionMs: Long?) {
-        latestPlayerPositionMs = positionMs
-        latestBufferedPositionMs = bufferedPositionMs
+    fun updatePlayerTelemetry(positionMs: Long?, bufferedPositionMs: Long?) = synchronized(lock) {
+        state = state.copy(
+            latestPlayerPositionMs = positionMs,
+            latestBufferedPositionMs = bufferedPositionMs,
+        )
     }
 
-    fun openSession(session: PlaybackSession) {
+    fun openSession(session: PlaybackSession) = synchronized(lock) {
         clearCurrentPlaybackState()
-        activeSessionShell = session
+        state = state.copy(activeSessionShell = session)
     }
 
-    fun clearActiveSessionCache() {
+    fun clearActiveSessionCache() = synchronized(lock) {
         clearCurrentPlaybackState()
     }
 
-    fun cleanupSession(sessionId: String) {
-        sessionAssetStore.clearSession(sessionId)
-        if (activeSessionShell?.sessionId == sessionId) {
-            activeSessionShell = null
-        }
-        activePreparedSession
+    fun cleanupSession(sessionId: String) = synchronized(lock) {
+        state.activePreparedSession
             ?.takeIf { prepared -> prepared.session.sessionId == sessionId }
             ?.let(::cancelPreparedSession)
+        if (state.activeSessionShell?.sessionId == sessionId) {
+            state = state.copy(activeSessionShell = null)
+        }
+        sessionAssetStore.clearSession(sessionId)
         clearTelemetryIfInactive()
     }
 
-    fun close() {
+    fun close() = synchronized(lock) {
         clearCurrentPlaybackState()
         sessionAssetStore.clearAllSessions()
     }
 
     private fun clearCurrentPlaybackState() {
-        val activeShell = activeSessionShell
-        val prepared = activePreparedSession
+        val activeShell = state.activeSessionShell
+        val prepared = state.activePreparedSession
         prepared?.let(::cancelPreparedSession)
         linkedSetOf<String>().apply {
             activeShell?.sessionId?.let(::add)
             prepared?.session?.sessionId?.let(::add)
         }.forEach(sessionAssetStore::clearSession)
-        activeSessionShell = null
-        activePreparedSession = null
-        latestPlayerPositionMs = null
-        latestBufferedPositionMs = null
+        state = CoreLocalHlsPlaybackState()
     }
 
     private fun cancelPreparedSession(prepared: PreparedSessionPlayback) {
         prepared.prefetchController.cancel()
         prepared.callTracker.cancel()
-        if (activePreparedSession?.session?.sessionId == prepared.session.sessionId) {
-            activePreparedSession = null
+        if (state.activePreparedSession?.session?.sessionId == prepared.session.sessionId) {
+            state = state.copy(activePreparedSession = null)
         }
     }
 
     private fun clearTelemetryIfInactive() {
-        if (activeSessionShell == null && activePreparedSession == null) {
-            latestPlayerPositionMs = null
-            latestBufferedPositionMs = null
+        if (state.activeSessionShell == null && state.activePreparedSession == null) {
+            state = state.copy(
+                latestPlayerPositionMs = null,
+                latestBufferedPositionMs = null,
+            )
         }
     }
 }

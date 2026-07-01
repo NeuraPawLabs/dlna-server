@@ -2,61 +2,47 @@ package labs.newrapaw.dlna.probe.core
 
 class PlaybackDiagnosticsState(
     private val sampleLimit: Int = 20,
+    private val deriveSnapshot: (PlaybackDiagnosticsSnapshot) -> PlaybackDiagnosticsSnapshot = ::deriveDiagnosticsSnapshot,
+    private val nowMs: () -> Long = System::currentTimeMillis,
+    private val deriveSnapshotThrottleMs: Long = DEFAULT_DERIVE_SNAPSHOT_THROTTLE_MS,
 ) {
     private val lock = Any()
     private val segmentTracker = PlaybackDiagnosticsSegmentTracker(sampleLimit)
     private val sessionTracker = PlaybackDiagnosticsSessionTracker()
-    private var snapshot = PlaybackDiagnosticsSnapshot.empty()
-    private val staleThresholdMs = 5_000L
+    private val snapshotRuntime = PlaybackDiagnosticsSnapshotRuntime(
+        deriveSnapshot = deriveSnapshot,
+        nowMs = nowMs,
+        deriveSnapshotThrottleMs = deriveSnapshotThrottleMs,
+    )
+    private val snapshotUpdater = PlaybackDiagnosticsSnapshotUpdater(
+        snapshotRuntime = snapshotRuntime,
+        segmentTracker = segmentTracker,
+        nowMs = nowMs,
+    )
+    private val segmentSnapshotUpdater = PlaybackDiagnosticsSegmentSnapshotUpdater(
+        snapshotRuntime = snapshotRuntime,
+        segmentTracker = segmentTracker,
+    )
+    private val sessionSnapshotUpdater = PlaybackDiagnosticsSessionSnapshotUpdater(
+        snapshotRuntime = snapshotRuntime,
+        sessionTracker = sessionTracker,
+    )
 
     fun resetForPlayback(
         sourceUrl: String,
         localProxyUrl: String,
         settings: ProxySettingsState,
-    ) = synchronized(lock) {
-        segmentTracker.reset()
-        snapshot = PlaybackDiagnosticsSnapshot.empty().copy(
-            playbackStatus = PlaybackDiagnosticsStatus.BUFFERING,
-            sessionStartedAtMs = System.currentTimeMillis(),
-            sourceUrl = sourceUrl,
-            localProxyUrl = localProxyUrl,
-            lastUpdatedAtMs = System.currentTimeMillis(),
-            upstreamMode = settings.upstreamMode,
-            activeProxy = settings.selectedProxy()?.displayUrl(),
-            prefetchConcurrency = settings.prefetchConcurrency,
-        )
-    }
+    ) = synchronized(lock) { snapshotUpdater.resetForPlayback(sourceUrl, localProxyUrl, settings) }
 
-    fun setPlaybackStatus(status: PlaybackDiagnosticsStatus) = synchronized(lock) {
-        touch(snapshot.copy(playbackStatus = status))
-    }
+    fun setPlaybackStatus(status: PlaybackDiagnosticsStatus) = synchronized(lock) { snapshotUpdater.setPlaybackStatus(status) }
 
-    fun setSessionStatus(status: String?) = synchronized(lock) {
-        touch(snapshot.copy(sessionStatus = status))
-    }
+    fun setSessionStatus(status: String?) = synchronized(lock) { snapshotUpdater.setSessionStatus(status) }
 
-    fun setLastError(message: String?) = synchronized(lock) {
-        touch(
-            snapshot.copy(
-                lastError = message,
-                playbackStatus = if (message.isNullOrBlank()) snapshot.playbackStatus else PlaybackDiagnosticsStatus.FAILED,
-            ),
-        )
-    }
+    fun setLastError(message: String?) = synchronized(lock) { snapshotUpdater.setLastError(message) }
 
-    fun setUpstreamSettings(settings: ProxySettingsState) = synchronized(lock) {
-        touch(
-            snapshot.copy(
-                upstreamMode = settings.upstreamMode,
-                activeProxy = settings.selectedProxy()?.displayUrl(),
-                prefetchConcurrency = settings.prefetchConcurrency,
-            ),
-        )
-    }
+    fun setUpstreamSettings(settings: ProxySettingsState) = synchronized(lock) { snapshotUpdater.setUpstreamSettings(settings) }
 
-    fun onSegmentRequested(url: String) = synchronized(lock) {
-        touch(snapshot.copy(lastRequestedSegment = url))
-    }
+    fun onSegmentRequested(url: String) = synchronized(lock) { segmentSnapshotUpdater.onSegmentRequested(url) }
 
     fun onSegmentResult(
         url: String,
@@ -64,79 +50,27 @@ class PlaybackDiagnosticsState(
         elapsedMs: Long,
         success: Boolean,
         fallbackReason: String? = null,
-    ) = synchronized(lock) {
-        val segmentStats = segmentTracker.recordResult(
-            snapshot = snapshot,
-            url = url,
-            source = source,
-            elapsedMs = elapsedMs,
-            success = success,
-            fallbackReason = fallbackReason,
-        )
-        touch(
-            snapshot.copy(
-                lastSucceededSegment = if (success) url else snapshot.lastSucceededSegment,
-                lastFailedSegment = if (success) snapshot.lastFailedSegment else url,
-                consecutiveFailures = segmentStats.consecutiveFailures,
-                recentSegmentSamples = segmentStats.recentSamples,
-                directWinCount = segmentStats.directWinCount,
-                proxyWinCount = segmentStats.proxyWinCount,
-                directAverageElapsedMs = segmentStats.directAverageElapsedMs,
-                proxyAverageElapsedMs = segmentStats.proxyAverageElapsedMs,
-                lastFiveAverageElapsedMs = segmentStats.lastFiveAverageElapsedMs,
-                lastFiveFailureCount = segmentStats.lastFiveFailureCount,
-                lastTwentyAverageElapsedMs = segmentStats.lastTwentyAverageElapsedMs,
-                lastTwentyFailureCount = segmentStats.lastTwentyFailureCount,
-                timeoutCount = segmentStats.timeoutCount,
-                fallbackCount = segmentStats.fallbackCount,
-                lastFallbackReason = fallbackReason ?: snapshot.lastFallbackReason,
-                lastError = if (success) snapshot.lastError else fallbackReason ?: "segment fetch failed",
-            ),
-        )
-    }
+    ) = synchronized(lock) { segmentSnapshotUpdater.onSegmentResult(url, source, elapsedMs, success, fallbackReason) }
 
     fun updatePrefetchStats(
         prefetchConcurrency: Int,
         pendingPrefetchCount: Int,
         inFlightCount: Int,
-    ) = synchronized(lock) {
-        touch(
-            snapshot.copy(
-                prefetchConcurrency = prefetchConcurrency,
-                pendingPrefetchCount = pendingPrefetchCount,
-                inFlightCount = inFlightCount,
-            ),
-        )
-    }
+    ) = synchronized(lock) { snapshotUpdater.updatePrefetchStats(prefetchConcurrency, pendingPrefetchCount, inFlightCount) }
 
     fun updatePlayerTelemetry(
         positionMs: Long?,
         bufferedPositionMs: Long?,
         isLoading: Boolean?,
-    ) = synchronized(lock) {
-        touch(
-            snapshot.copy(
-                playerPositionMs = positionMs,
-                playerBufferedPositionMs = bufferedPositionMs,
-                playerIsLoading = isLoading,
-            ),
-        )
-    }
+    ) = synchronized(lock) { snapshotUpdater.updatePlayerTelemetry(positionMs, bufferedPositionMs, isLoading) }
+
+    fun playerIsLoading(): Boolean? = synchronized(lock) { snapshotRuntime.playerIsLoading() }
 
     fun updateStartupGate(
         phase: String,
         ready: Boolean,
         detail: String?,
-    ) = synchronized(lock) {
-        touch(
-            sessionTracker.updateStartupGate(
-                snapshot = snapshot,
-                phase = phase,
-                ready = ready,
-                detail = detail,
-            ),
-        )
-    }
+    ) = synchronized(lock) { sessionSnapshotUpdater.updateStartupGate(phase, ready, detail) }
 
     fun updateSlotDiagnostics(
         slotStates: List<SlotDiagnosticsItem>,
@@ -146,84 +80,43 @@ class PlaybackDiagnosticsState(
         continuousReadySlotCount: Int,
         continuousReadySlotDurationMs: Long,
     ) = synchronized(lock) {
-        touch(
-            sessionTracker.updateSlotDiagnostics(
-                snapshot = snapshot,
-                slotStates = slotStates,
-                currentPlaybackSlotIndex = currentPlaybackSlotIndex,
-                bufferedSlotIndex = bufferedSlotIndex,
-                currentPlaybackSlotReady = currentPlaybackSlotReady,
-                continuousReadySlotCount = continuousReadySlotCount,
-                continuousReadySlotDurationMs = continuousReadySlotDurationMs,
-            ),
+        sessionSnapshotUpdater.updateSlotDiagnostics(
+            slotStates,
+            currentPlaybackSlotIndex,
+            bufferedSlotIndex,
+            currentPlaybackSlotReady,
+            continuousReadySlotCount,
+            continuousReadySlotDurationMs,
         )
     }
 
     fun updateAssetDiagnostics(assetDiagnostics: List<AssetDiagnosticsItem>) = synchronized(lock) {
-        touch(
-            sessionTracker.updateAssetDiagnostics(
-                snapshot = snapshot,
-                assetDiagnostics = assetDiagnostics,
-            ),
-        )
+        sessionSnapshotUpdater.updateAssetDiagnostics(assetDiagnostics)
     }
 
     fun updateAssetSummary(
         readyAssetCount: Int,
         totalAssetCount: Int,
         readyBytes: Long,
-    ) = synchronized(lock) {
-        touch(
-            sessionTracker.updateAssetSummary(
-                snapshot = snapshot,
-                readyAssetCount = readyAssetCount,
-                totalAssetCount = totalAssetCount,
-                readyBytes = readyBytes,
-            ),
-        )
-    }
+    ) = synchronized(lock) { sessionSnapshotUpdater.updateAssetSummary(readyAssetCount, totalAssetCount, readyBytes) }
 
     fun clearSlotDiagnostics(
         currentPlaybackSlotIndex: Int?,
         bufferedSlotIndex: Int?,
-    ) = synchronized(lock) {
-        touch(
-            sessionTracker.clearSlotDiagnostics(
-                snapshot = snapshot,
-                currentPlaybackSlotIndex = currentPlaybackSlotIndex,
-                bufferedSlotIndex = bufferedSlotIndex,
-            ),
-        )
-    }
+    ) = synchronized(lock) { sessionSnapshotUpdater.clearSlotDiagnostics(currentPlaybackSlotIndex, bufferedSlotIndex) }
 
     fun updateCurrentLoadingAsset(
         assetId: String?,
         kind: String?,
         trackId: String?,
         source: String?,
-    ) = synchronized(lock) {
-        touch(
-            sessionTracker.updateCurrentLoadingAsset(
-                snapshot = snapshot,
-                assetId = assetId,
-                kind = kind,
-                trackId = trackId,
-                source = source,
-            ),
-        )
-    }
+    ) = synchronized(lock) { sessionSnapshotUpdater.updateCurrentLoadingAsset(assetId, kind, trackId, source) }
 
-    fun snapshot(): PlaybackDiagnosticsSnapshot = synchronized(lock) {
-        val stale = snapshot.lastUpdatedAtMs?.let { System.currentTimeMillis() - it > staleThresholdMs } ?: false
-        snapshot.copy(
-            recentSegmentSamples = segmentTracker.snapshotSamples(),
-            isStale = stale,
-        )
-    }
+    fun clearPreparedSessionDiagnostics() = synchronized(lock) { sessionSnapshotUpdater.clearPreparedSessionDiagnostics() }
 
-    private fun touch(nextSnapshot: PlaybackDiagnosticsSnapshot) {
-        val withTimestamp = nextSnapshot.copy(lastUpdatedAtMs = System.currentTimeMillis())
-        val withRules = deriveDiagnosticsSnapshot(withTimestamp)
-        snapshot = withRules
+    fun snapshot(): PlaybackDiagnosticsSnapshot = synchronized(lock) { snapshotRuntime.snapshot() }
+
+    private companion object {
+        const val DEFAULT_DERIVE_SNAPSHOT_THROTTLE_MS = 250L
     }
 }

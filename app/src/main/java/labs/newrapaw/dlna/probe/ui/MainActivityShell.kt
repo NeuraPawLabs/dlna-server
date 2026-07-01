@@ -9,6 +9,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
+import labs.newrapaw.dlna.probe.R
 
 data class MainActivityShell(
     val rootView: LinearLayout,
@@ -57,7 +58,7 @@ fun buildMainActivityShell(
     rootView.addView(menuView)
 
     val titleView = TextView(context).apply {
-        text = "PawCast"
+        text = context.getString(R.string.main_activity_title)
         textSize = 22f
         setTextColor(Color.WHITE)
         gravity = Gravity.START
@@ -121,7 +122,7 @@ fun buildMainActivityShell(
     contentView.addView(instructionView)
 
     val managementUrlView = TextView(context).apply {
-        text = "管理页面: $publicControlUrl"
+        text = context.getString(R.string.main_activity_management_url, publicControlUrl)
         textSize = 15f
         setTextColor(0xff999999.toInt())
         gravity = Gravity.CENTER_HORIZONTAL
@@ -138,13 +139,14 @@ fun buildMainActivityShell(
         this.player = player
         setBackgroundColor(Color.BLACK)
         visibility = View.GONE
+        isFocusable = true
+        isFocusableInTouchMode = true
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             0,
             1f,
         )
     }
-    playerView.keepScreenOn = true
     contentView.addView(playerView)
 
     return MainActivityShell(

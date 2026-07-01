@@ -23,23 +23,44 @@ class ArchitectureCleanupTest {
     @Test
     fun localHlsProxyDelegatesServerLifecycle() {
         val source = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxy.kt")
+        val runtimeSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyServingRuntime.kt")
 
+        assertTrue(proxySourcePaths("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyHost.kt").any(Files::exists))
         assertTrue(proxySourcePaths("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyServer.kt").any(Files::exists))
+        assertTrue(proxySourcePaths("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyServingRuntime.kt").any(Files::exists))
         assertFalse(source.contains("private val running = AtomicBoolean("))
         assertFalse(source.contains("private var serverSocket: ServerSocket? = null"))
         assertFalse(source.contains("ServerSocket(0, 50, InetAddress.getByName(\"0.0.0.0\"))"))
-        assertTrue(source.contains("private val proxyServer = LocalHlsProxyServer("))
+        assertFalse(source.contains("private val proxyServer = LocalHlsProxyServer("))
+        assertFalse(source.contains("private val host = LocalHlsProxyHost("))
+        assertTrue(source.contains("private val servingRuntime = LocalHlsProxyServingRuntime("))
+        assertTrue(runtimeSource.contains("private val host = LocalHlsProxyHost("))
+    }
+
+    @Test
+    fun localHlsProxyUsesBoundedExecutorForAppSideWork() {
+        val proxySource = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxy.kt")
+        val hostSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyHost.kt")
+
+        assertFalse(proxySource.contains("private val executor: ExecutorService = boundedExecutor("))
+        assertFalse(hostSource.contains("Executors.newCachedThreadPool()"))
+        assertTrue(hostSource.contains("ThreadPoolExecutor("))
+        assertTrue(hostSource.contains("LinkedBlockingQueue("))
     }
 
     @Test
     fun localHlsProxyDelegatesRequestRouting() {
         val source = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxy.kt")
+        val runtimeSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyServingRuntime.kt")
 
         assertTrue(proxySourcePaths("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyRequestHandler.kt").any(Files::exists))
         assertFalse(source.contains("private fun handle(socket: Socket)"))
         assertFalse(source.contains("private fun handleSessionRoute(method: String, path: String, output: OutputStream)"))
-        assertTrue(source.contains("private val requestHandler = LocalHlsProxyRequestHandler("))
-        assertTrue(source.contains("handleSocket = requestHandler::handle"))
+        assertFalse(source.contains("private val requestHandler = LocalHlsProxyRequestHandler("))
+        assertFalse(source.contains("handleSocket = requestHandler::handle"))
+        assertTrue(source.contains("private val servingRuntime = LocalHlsProxyServingRuntime("))
+        assertTrue(runtimeSource.contains("private val requestHandler = LocalHlsProxyRequestHandler("))
+        assertTrue(runtimeSource.contains("handleSocket = requestHandler::handle"))
     }
 
     @Test
@@ -64,8 +85,8 @@ class ArchitectureCleanupTest {
         assertFalse(source.contains("private fun handleDlnaControl("))
         assertFalse(source.contains("private fun handleEventSubscribe("))
         assertFalse(source.contains("private fun handleEventUnsubscribe("))
-        assertTrue(source.contains("private val adminRoutes = AdminHttpRoutes("))
-        assertTrue(source.contains("private val dlnaRoutes = LocalHlsProxyDlnaRoutes("))
+        assertTrue(source.contains("adminRoutes = adminRuntime.routes"))
+        assertTrue(source.contains("dlnaRoutes = dlnaRuntime.routes"))
     }
 
     @Test
@@ -114,12 +135,107 @@ class ArchitectureCleanupTest {
     @Test
     fun localHlsProxyEmbedsCoreSessionRoutesWithoutSocketRelay() {
         val proxySource = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxy.kt")
+        val runtimeSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyServingRuntime.kt")
         val relaySource = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxySessionRelay.kt")
 
         assertFalse(proxySource.contains("coreProxyPort = { coreProxy.port }"))
         assertFalse(relaySource.contains("Socket(\"127.0.0.1\", coreProxyPort())"))
         assertTrue(proxySource.contains("serveHttp = false"))
-        assertTrue(proxySource.contains("handleSessionRequest = coreProxy::handleSessionRequest"))
+        assertFalse(proxySource.contains("handleSessionRequest = coreProxy::handleSessionRequest"))
+        assertTrue(runtimeSource.contains("handleSessionRequest = coreProxy::handleSessionRequest"))
+    }
+
+    @Test
+    fun localHlsProxyDelegatesServingRuntimeAssembly() {
+        val proxySource = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxy.kt")
+        val runtimeSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyServingRuntime.kt")
+
+        assertTrue(proxySourcePaths("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyServingRuntime.kt").any(Files::exists))
+        assertFalse(proxySource.contains("private val sessionRelay = LocalHlsProxySessionRelay("))
+        assertFalse(proxySource.contains("private val requestHandler = LocalHlsProxyRequestHandler("))
+        assertFalse(proxySource.contains("private val host = LocalHlsProxyHost("))
+        assertTrue(proxySource.contains("private val servingRuntime = LocalHlsProxyServingRuntime("))
+        assertTrue(proxySource.contains("fun start() = servingRuntime.start()"))
+        assertTrue(proxySource.contains("servingRuntime.close()"))
+        assertTrue(runtimeSource.contains("internal class LocalHlsProxyServingRuntime("))
+        assertTrue(runtimeSource.contains("private val sessionRelay = LocalHlsProxySessionRelay("))
+        assertTrue(runtimeSource.contains("private val requestHandler = LocalHlsProxyRequestHandler("))
+        assertTrue(runtimeSource.contains("private val host = LocalHlsProxyHost("))
+    }
+
+    @Test
+    fun localHlsProxyDelegatesDlnaEventNotificationDelivery() {
+        val proxySource = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxy.kt")
+        val runtimeSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyDlnaRuntime.kt")
+
+        assertTrue(proxySourcePaths("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyDlnaEvents.kt").any(Files::exists))
+        assertTrue(proxySourcePaths("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyDlnaRuntime.kt").any(Files::exists))
+        assertTrue(proxySourcePaths("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyEventNotifier.kt").any(Files::exists))
+        assertFalse(proxySource.contains("private val eventNotifyExecutor"))
+        assertFalse(proxySource.contains("private val eventNotifyClient"))
+        assertFalse(proxySource.contains("private fun dispatchEventNotification("))
+        assertFalse(proxySource.contains("fun buildEventNotifyClient("))
+        assertFalse(proxySource.contains("private val eventNotifier = LocalHlsProxyEventNotifier("))
+        assertFalse(proxySource.contains("private val eventing = DlnaEventing("))
+        assertFalse(proxySource.contains("private fun recordEventNotifyDeliveryResult("))
+        assertTrue(proxySource.contains("private val dlnaRuntime = LocalHlsProxyDlnaRuntime("))
+        assertTrue(runtimeSource.contains("private val dlnaEvents = LocalHlsProxyDlnaEvents("))
+        assertTrue(runtimeSource.contains("eventing = dlnaEvents.eventing"))
+        assertTrue(runtimeSource.contains("onAvTransportStateChanged = dlnaEvents::publishAvTransport"))
+        assertTrue(runtimeSource.contains("onRenderingControlStateChanged = dlnaEvents::publishRenderingControl"))
+    }
+
+    @Test
+    fun localHlsProxyDelegatesDlnaRuntimeAssembly() {
+        val proxySource = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxy.kt")
+        val runtimeSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyDlnaRuntime.kt")
+
+        assertTrue(proxySourcePaths("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyDlnaRuntime.kt").any(Files::exists))
+        assertFalse(proxySource.contains("private lateinit var renderer: DlnaRendererController"))
+        assertFalse(proxySource.contains("private val rendererInstance = DlnaRendererController("))
+        assertFalse(proxySource.contains("private val dlnaRoutes = LocalHlsProxyDlnaRoutes("))
+        assertTrue(proxySource.contains("private val dlnaRuntime = LocalHlsProxyDlnaRuntime("))
+        assertTrue(proxySource.contains("dlnaRoutes = dlnaRuntime.routes"))
+        assertTrue(proxySource.contains("dlnaRuntime.syncPlayerState("))
+        assertTrue(proxySource.contains("dlnaRuntime.syncPlayerPosition(positionMs)"))
+        assertTrue(runtimeSource.contains("internal class LocalHlsProxyDlnaRuntime("))
+        assertTrue(runtimeSource.contains("val routes = LocalHlsProxyDlnaRoutes("))
+    }
+
+    @Test
+    fun localHlsProxyDelegatesAdminRuntimeAssembly() {
+        val proxySource = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxy.kt")
+        val runtimeSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyAdminRuntime.kt")
+
+        assertTrue(proxySourcePaths("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyAdminRuntime.kt").any(Files::exists))
+        assertFalse(proxySource.contains("private val adminRoutes = AdminHttpRoutes("))
+        assertTrue(proxySource.contains("private val adminRuntime = LocalHlsProxyAdminRuntime("))
+        assertTrue(proxySource.contains("adminRoutes = adminRuntime.routes"))
+        assertTrue(runtimeSource.contains("internal class LocalHlsProxyAdminRuntime("))
+        assertTrue(runtimeSource.contains("val routes = AdminHttpRoutes("))
+    }
+
+    @Test
+    fun localHlsProxyDelegatesPlaybackSessionRouting() {
+        val proxySource = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxy.kt")
+
+        assertTrue(proxySourcePaths("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyPlaybackRouter.kt").any(Files::exists))
+        assertFalse(proxySource.contains("private fun dispatchPlaybackRequest("))
+        assertFalse(proxySource.contains("safeLog(\"Remote play request:"))
+        assertFalse(proxySource.contains("safeLog(\"Rebuilding active session:"))
+        assertTrue(proxySource.contains("private val playbackRouter = LocalHlsProxyPlaybackRouter("))
+        assertTrue(proxySource.contains("onPlayRequested = playbackRouter::dispatch"))
+        assertTrue(proxySource.contains("requestPlayback = playbackRouter::dispatch"))
+        assertTrue(proxySource.contains("fun recoverActivePlaybackSession(): String? = playbackRouter.recoverActivePlaybackSession(baseUrl)"))
+    }
+
+    @Test
+    fun localHlsProxyUsesDedicatedRequestFailurePolicy() {
+        val proxySource = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxy.kt")
+
+        assertTrue(proxySourcePaths("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyRequestFailurePolicy.kt").any(Files::exists))
+        assertFalse(proxySource.contains("private fun shouldSuppressRequestFailureLog("))
+        assertTrue(proxySource.contains("shouldSuppressRequestFailureLog = ::shouldSuppressProxyRequestFailureLog"))
     }
 
     @Test
@@ -180,6 +296,72 @@ class ArchitectureCleanupTest {
         assertTrue(source.contains("private val avTransportService = DlnaAvTransportService("))
         assertTrue(source.contains("private val renderingControlService = DlnaRenderingControlService("))
         assertTrue(source.contains("private val connectionManagerService = DlnaConnectionManagerService()"))
+    }
+
+    @Test
+    fun dlnaRendererStateUsesSingleStateModel() {
+        val source = sourceText("src/main/java/labs/newrapaw/dlna/probe/dlna/DlnaRendererState.kt")
+        val stateSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/dlna/DlnaRendererStateModel.kt")
+
+        assertTrue(dlnaSourcePaths("src/main/java/labs/newrapaw/dlna/probe/dlna/DlnaRendererStateModel.kt").any(Files::exists))
+        assertFalse(source.contains("private var currentUri: String ="))
+        assertFalse(source.contains("private var currentUriMetadata: String ="))
+        assertFalse(source.contains("private var transportState: String ="))
+        assertFalse(source.contains("private var transportStatus: String ="))
+        assertFalse(source.contains("private var relativeTimePosition: String ="))
+        assertFalse(source.contains("private var volume: Int = 50"))
+        assertFalse(source.contains("private var muted: Boolean = false"))
+        assertTrue(source.contains("private var state = DlnaRendererStateModel()"))
+        assertTrue(stateSource.contains("data class DlnaRendererStateModel("))
+        assertTrue(stateSource.contains("fun toSnapshot(): DlnaRendererSnapshot"))
+    }
+
+    @Test
+    fun dlnaEventingDelegatesProtocolHelpers() {
+        val source = sourceText("src/main/java/labs/newrapaw/dlna/probe/dlna/DlnaEventing.kt")
+        val helperSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/dlna/DlnaEventingProtocol.kt")
+        val storeSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/dlna/DlnaEventSubscriptionStore.kt")
+
+        assertTrue(dlnaSourcePaths("src/main/java/labs/newrapaw/dlna/probe/dlna/DlnaEventingProtocol.kt").any(Files::exists))
+        assertFalse(source.contains("private fun parseCallbackUrl("))
+        assertFalse(source.contains("private fun parseTimeout("))
+        assertFalse(source.contains("private fun safeAddMillis("))
+        assertFalse(source.contains("private fun buildPropertySetXml("))
+        assertFalse(source.contains("private fun buildAvTransportLastChange("))
+        assertFalse(source.contains("private fun buildRenderingControlLastChange("))
+        assertTrue(storeSource.contains("parseCallbackUrl("))
+        assertTrue(storeSource.contains("parseTimeout("))
+        assertTrue(source.contains("buildPropertySetXml("))
+        assertTrue(source.contains("buildAvTransportLastChange("))
+        assertTrue(source.contains("buildRenderingControlLastChange("))
+        assertTrue(helperSource.contains("fun parseCallbackUrl("))
+        assertTrue(helperSource.contains("fun parseTimeout("))
+        assertTrue(helperSource.contains("fun buildPropertySetXml("))
+        assertTrue(helperSource.contains("fun buildAvTransportLastChange("))
+        assertTrue(helperSource.contains("fun buildRenderingControlLastChange("))
+    }
+
+    @Test
+    fun dlnaEventingDelegatesSubscriptionStateManagement() {
+        val source = sourceText("src/main/java/labs/newrapaw/dlna/probe/dlna/DlnaEventing.kt")
+        val storeSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/dlna/DlnaEventSubscriptionStore.kt")
+
+        assertTrue(dlnaSourcePaths("src/main/java/labs/newrapaw/dlna/probe/dlna/DlnaEventSubscriptionStore.kt").any(Files::exists))
+        assertFalse(source.contains("private val subscriptions = linkedMapOf"))
+        assertFalse(source.contains("private fun pruneExpiredSubscriptionsLocked()"))
+        assertFalse(source.contains("private fun pruneOldestSubscriptionsLocked("))
+        assertFalse(source.contains("val existing = sidHeader?.let(subscriptions::get)"))
+        assertFalse(source.contains("subscriptions.remove(sid)"))
+        assertTrue(source.contains("private val subscriptionStore = DlnaEventSubscriptionStore("))
+        assertTrue(source.contains("subscriptionStore.subscribe("))
+        assertTrue(source.contains("subscriptionStore.unsubscribe("))
+        assertTrue(source.contains("subscriptionStore.notificationsForService("))
+        assertTrue(source.contains("subscriptionStore.recordDeliveryResult("))
+        assertTrue(storeSource.contains("class DlnaEventSubscriptionStore("))
+        assertTrue(storeSource.contains("fun subscribe("))
+        assertTrue(storeSource.contains("fun unsubscribe("))
+        assertTrue(storeSource.contains("fun notificationsForService("))
+        assertTrue(storeSource.contains("fun recordDeliveryResult("))
     }
 
     @Test
@@ -293,7 +475,8 @@ class ArchitectureCleanupTest {
         val handlerSource = sourceText("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyRequestHandler.kt")
 
         assertTrue(adminSourcePaths("src/main/java/labs/newrapaw/dlna/probe/admin/AdminHttpRoutes.kt").any(Files::exists))
-        assertTrue(proxySource.contains("private val adminRoutes = AdminHttpRoutes("))
+        assertTrue(proxySource.contains("private val adminRuntime = LocalHlsProxyAdminRuntime("))
+        assertTrue(proxySourcePaths("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyAdminRuntime.kt").any(Files::exists))
         assertTrue(handlerSource.contains("private val adminRoutes: AdminHttpRoutes"))
         assertFalse(handlerSource.contains("private val appRoutes: LocalHlsProxyAppRoutes"))
         assertTrue(proxySourcePaths("src/main/java/labs/newrapaw/dlna/probe/proxy/LocalHlsProxyAppRoutes.kt").none(Files::exists))
@@ -332,10 +515,10 @@ class ArchitectureCleanupTest {
 
     @Test
     fun mainActivityRuntimeSharesSingleHttpClientAcrossAppServices() {
-        val source = sourceText("src/main/java/labs/newrapaw/dlna/probe/ui/MainActivityServices.kt")
+        val source = sourceText("src/main/java/labs/newrapaw/dlna/probe/platform/RendererServiceRuntimeBootstrap.kt")
 
         assertTrue(source.contains("val appHttpClient = OkHttpClient()"))
-        assertTrue(source.contains("val updater = ApkUpdater(activity, appHttpClient, logState::append)"))
+        assertTrue(source.contains("val updater = ApkUpdater(context, appHttpClient, logState::append)"))
         assertTrue(source.contains("client = appHttpClient"))
         assertEquals(1, "OkHttpClient\\(".toRegex().findAll(source).count())
     }
@@ -390,7 +573,6 @@ class ArchitectureCleanupTest {
         assertTrue(uiSourcePaths("src/main/java/labs/newrapaw/dlna/probe/ui/MainActivityNavigation.kt").any(Files::exists))
         assertTrue(uiSourcePaths("src/main/java/labs/newrapaw/dlna/probe/ui/MainActivityPlatform.kt").any(Files::exists))
         assertTrue(uiSourcePaths("src/main/java/labs/newrapaw/dlna/probe/ui/MainActivityPlaybackCoordinator.kt").any(Files::exists))
-        assertTrue(uiSourcePaths("src/main/java/labs/newrapaw/dlna/probe/ui/MainActivityPlaybackRuntime.kt").any(Files::exists))
         assertTrue(uiSourcePaths("src/main/java/labs/newrapaw/dlna/probe/ui/MainActivityPlayerListener.kt").any(Files::exists))
         assertTrue(uiSourcePaths("src/main/java/labs/newrapaw/dlna/probe/ui/MainActivityShell.kt").any(Files::exists))
         assertTrue(uiSourcePaths("src/main/java/labs/newrapaw/dlna/probe/ui/MainActivitySsdp.kt").any(Files::exists))
@@ -403,7 +585,6 @@ class ArchitectureCleanupTest {
         assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/MainActivityNavigation.kt").none(Files::exists))
         assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/MainActivityPlatform.kt").none(Files::exists))
         assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/MainActivityPlaybackCoordinator.kt").none(Files::exists))
-        assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/MainActivityPlaybackRuntime.kt").none(Files::exists))
         assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/MainActivityPlayerListener.kt").none(Files::exists))
         assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/MainActivityShell.kt").none(Files::exists))
         assertTrue(sourcePaths("src/main/java/labs/newrapaw/dlna/probe/MainActivitySsdp.kt").none(Files::exists))

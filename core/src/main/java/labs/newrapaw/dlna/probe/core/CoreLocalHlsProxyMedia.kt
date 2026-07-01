@@ -52,17 +52,35 @@ internal fun buildSessionTrackId(
 internal fun findSlotIndexForAsset(slots: List<TimelineSlot>, assetId: String): Int? =
     slots.firstOrNull { slot ->
         slot.videoAssetId == assetId ||
+            assetId in slot.videoAssetIdsByTrack.values ||
             assetId in slot.audioAssetIds ||
             assetId in slot.subtitleAssetIds ||
             assetId in slot.prerequisiteAssetIds ||
+            slot.videoPrerequisiteAssetIdsByTrack.values.any { assetId in it } ||
             slot.audioPrerequisiteAssetIds.values.any { assetId in it } ||
             slot.subtitlePrerequisiteAssetIds.values.any { assetId in it }
     }?.slotIndex
 
 internal fun buildSessionPrefetchQueue(assets: List<SessionAsset>): ArrayDeque<String> {
-    val startup = SessionDownloader.planStartupQueue(assets)
+    val startup = SessionDownloader.planStartupQueue(
+        assets.filter { asset -> asset.requiredForStartup },
+    )
     val remaining = assets
         .filterNot { asset -> startup.any { it.assetId == asset.assetId } }
-        .sortedWith(compareBy<SessionAsset> { it.sequence ?: Int.MAX_VALUE }.thenBy { it.assetId })
+        .sortedWith(
+            compareBy<SessionAsset> { it.sequence ?: Int.MAX_VALUE }
+                .thenBy { prefetchAssetPriority(it.kind) }
+                .thenBy { it.assetId },
+        )
     return ArrayDeque((startup + remaining).map { it.assetId })
 }
+
+private fun prefetchAssetPriority(kind: labs.newrapaw.dlna.probe.core.session.SessionAssetKind): Int =
+    when (kind) {
+        labs.newrapaw.dlna.probe.core.session.SessionAssetKind.INIT_SEGMENT -> 0
+        labs.newrapaw.dlna.probe.core.session.SessionAssetKind.KEY -> 1
+        labs.newrapaw.dlna.probe.core.session.SessionAssetKind.VIDEO_SEGMENT -> 2
+        labs.newrapaw.dlna.probe.core.session.SessionAssetKind.AUDIO_SEGMENT -> 3
+        labs.newrapaw.dlna.probe.core.session.SessionAssetKind.SUBTITLE_SEGMENT -> 4
+        else -> 5
+    }
